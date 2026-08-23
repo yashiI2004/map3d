@@ -1,8 +1,11 @@
 import React, { useEffect, useRef, useState } from "react";
 import {
+  CircleMarker,
   MapContainer,
+  Popup,
   Rectangle,
   TileLayer,
+  useMap,
   useMapEvents,
 } from "react-leaflet";
 import L, { LatLng, LatLngBounds } from "leaflet";
@@ -14,6 +17,190 @@ const IconSize = css({
   width: "14px",
   height: "14px",
 });
+
+function LocationSearch() {
+  const map = useMap();
+  const [query, setQuery] = useState("");
+  const [results, setResults] = useState<any[]>([]);
+  const [selectedResult, setSelectedResult] = useState<any | null>(null);
+  const [message, setMessage] = useState("");
+  const [isSearching, setIsSearching] = useState(false);
+
+  const handleSearch = async (event?: React.FormEvent) => {
+    event?.preventDefault();
+    const trimmedQuery = query.trim();
+
+    if (!trimmedQuery) {
+      setResults([]);
+      setMessage("Enter a location to search.");
+      return;
+    }
+
+    setIsSearching(true);
+    setMessage("");
+
+    try {
+      const response = await fetch(
+        `https://nominatim.openstreetmap.org/search?format=jsonv2&limit=5&q=${encodeURIComponent(trimmedQuery)}`,
+        {
+          headers: {
+            "Accept-Language": "en",
+          },
+        }
+      );
+      const data = await response.json();
+
+      if (data?.length) {
+        setResults(data);
+        const firstResult = data[0];
+        const lat = parseFloat(firstResult.lat);
+        const lng = parseFloat(firstResult.lon);
+        setSelectedResult(firstResult);
+        map.flyTo([lat, lng], Math.max(13, Math.min(18, map.getZoom() || 13)), {
+          duration: 1.2,
+        });
+        setMessage(`Showing ${firstResult.display_name}`);
+      } else {
+        setResults([]);
+        setMessage("No matching location found.");
+      }
+    } catch (error) {
+      setResults([]);
+      setMessage("Unable to search right now.");
+    } finally {
+      setIsSearching(false);
+    }
+  };
+
+  const focusResult = (result: any) => {
+    const lat = parseFloat(result.lat);
+    const lng = parseFloat(result.lon);
+    setSelectedResult(result);
+    map.flyTo([lat, lng], 14, { duration: 1.2 });
+    setQuery(result.display_name);
+    setResults([]);
+    setMessage(`Focused on ${result.display_name}`);
+  };
+
+  return (
+    <div
+      css={css({
+        position: "absolute",
+        top: "1rem",
+        left: "1rem",
+        zIndex: 9999,
+        width: "min(24rem, calc(100% - 2rem))",
+      })}
+    >
+      <form
+        onSubmit={handleSearch}
+        css={css({
+          display: "flex",
+          gap: "0.5rem",
+          backgroundColor: "rgba(255,255,255,0.94)",
+          backdropFilter: "blur(8px)",
+          borderRadius: "10px",
+          padding: "0.55rem",
+          boxShadow: "0 6px 18px rgba(0,0,0,0.15)",
+        })}
+      >
+        <input
+          value={query}
+          onChange={(event) => setQuery(event.target.value)}
+          placeholder="Search location"
+          css={css({
+            flex: 1,
+            border: "none",
+            outline: "none",
+            fontSize: "13px",
+            background: "transparent",
+          })}
+        />
+        <button
+          type="submit"
+          css={css({
+            border: "none",
+            backgroundColor: "#2563eb",
+            color: "#ffffff",
+            borderRadius: "8px",
+            padding: "0.45rem 0.8rem",
+            cursor: "pointer",
+            fontSize: "12px",
+            fontWeight: 600,
+          })}
+        >
+          {isSearching ? "Searching..." : "Search"}
+        </button>
+      </form>
+      {message && (
+        <div
+          css={css({
+            marginTop: "0.45rem",
+            backgroundColor: "rgba(255,255,255,0.94)",
+            borderRadius: "8px",
+            padding: "0.55rem 0.7rem",
+            fontSize: "12px",
+            color: "#374151",
+            boxShadow: "0 4px 12px rgba(0,0,0,0.1)",
+          })}
+        >
+          {message}
+        </div>
+      )}
+      {results.length > 0 && (
+        <div
+          css={css({
+            marginTop: "0.45rem",
+            backgroundColor: "rgba(255,255,255,0.96)",
+            borderRadius: "10px",
+            padding: "0.4rem",
+            boxShadow: "0 4px 12px rgba(0,0,0,0.12)",
+            display: "flex",
+            flexDirection: "column",
+            gap: "0.3rem",
+          })}
+        >
+          {results.map((result) => (
+            <button
+              key={result.place_id}
+              type="button"
+              onClick={() => focusResult(result)}
+              css={css({
+                textAlign: "left",
+                border: "none",
+                background: "transparent",
+                padding: "0.45rem 0.55rem",
+                borderRadius: "8px",
+                cursor: "pointer",
+                color: "#111827",
+                fontSize: "12px",
+                ":hover": {
+                  backgroundColor: "#f3f4f6",
+                },
+              })}
+            >
+              {result.display_name}
+            </button>
+          ))}
+        </div>
+      )}
+      {selectedResult && (
+        <CircleMarker
+          center={[parseFloat(selectedResult.lat), parseFloat(selectedResult.lon)]}
+          radius={8}
+          pathOptions={{
+            color: "#ffffff",
+            fillColor: "#2563eb",
+            fillOpacity: 1,
+            weight: 3,
+          }}
+        >
+          <Popup>{selectedResult.display_name}</Popup>
+        </CircleMarker>
+      )}
+    </div>
+  );
+}
 
 function RectangleSelector({
   isDrag = true,
@@ -165,6 +352,7 @@ export function MapComponent({
           right: "1rem",
           top: "1rem",
           display: "flex",
+          flexDirection: "column",
           justifyContent: "flex-end",
           gap: "0.5rem",
         })}
@@ -173,7 +361,6 @@ export function MapComponent({
           css={css({
             display: bounds == null || isDrag == true ? "none" : "flex",
             color: "#ffffff",
-
             backgroundColor: "#ef4444",
             backdropFilter: "blur(8px)",
             border: "none",
@@ -196,7 +383,6 @@ export function MapComponent({
         <button
           css={css({
             color: isDrag ? "#ffffff" : "#000000",
-
             backgroundColor: isDrag ? "#007bffe8" : "#ffffff96",
             backdropFilter: "blur(8px)",
             border: "none",
@@ -223,14 +409,22 @@ export function MapComponent({
       <MapContainer
         center={[40.8, -73.95]}
         zoom={13}
+        minZoom={2}
+        maxZoom={20}
+        worldCopyJump
+        zoomControl
         style={{
           height: "70vh",
           width: "100%",
+          minHeight: "420px",
         }}
       >
+        <LocationSearch />
         <TileLayer
-          attribution='&copy; <a href="https://www.openstreetmap.org/">OpenStreetMap</a> contributors'
-          url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+          attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>'
+          url="https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png"
+          subdomains="abcd"
+          maxZoom={20}
         />
         <RectangleSelector
           bounds={bounds}

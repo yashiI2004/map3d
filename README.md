@@ -1,5 +1,5 @@
 <p align='center'>
-<h1 align='center'>🗺️ map3d</h1>
+<h1 align='center'>🗺️ Terrain</h1>
 <p align='center'>Generate a real world 3D map</p>
 </p>
 

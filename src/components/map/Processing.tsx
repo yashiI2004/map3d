@@ -7,6 +7,10 @@ export interface Building {
   geometry?: { lat: number; lng: number }[];
 }
 
+export interface GeoFeature extends Building {
+  featureType: "building" | "road" | "green" | "water" | "tree";
+}
+
 const spinAnimation = keyframes`
 from { transform: rotate(0deg); }
 to { transform: rotate(360deg); }

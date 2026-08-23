@@ -18,4 +18,13 @@ export default defineConfig({
   resolve: {
     alias: [{ find: "@", replacement: "/src" }],
   },
+  server: {
+    proxy: {
+      "/api/elevation": {
+        target: "https://api.opentopodata.org",
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/api\/elevation/, "/v1/aster30m"),
+      },
+    },
+  },
 });

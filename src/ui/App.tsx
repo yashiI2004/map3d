@@ -6,12 +6,14 @@ import { Description } from "@/components/text/Description";
 import { Column } from "@/components/flex/Column";
 import { MapComponent } from "@/components/map/SelectMap";
 import { useEffect, useState } from "react";
+import { UploadImages } from "@/components/UploadImages";
+import { JobStatus } from "@/components/JobStatus";
 import {
   Button,
   NextButton,
   PrevButton,
 } from "@/components/button/BottomButton";
-import { BuildingHeights, Building } from "@/components/map/Processing";
+import { BuildingHeights, Building, GeoFeature } from "@/components/map/Processing";
 import { ChevronLeft, ChevronRight, Download, Loader2 } from "lucide-react";
 import { useAreaStore } from "@/state/areaStore";
 import { useActionStore } from "@/state/exportStore";
@@ -44,8 +46,14 @@ function App() {
   const [buildings, setBuildings] = useState<Building[]>([]);
   const [isFetchingBuildings, setIsFetchingBuildings] = useState(false);
   const [hasFetchedBuildings, setHasFetchedBuildings] = useState(false);
+  const [uploadedFiles, setUploadedFiles] = useState<File[]>([]);
+  const [jobId, setJobId] = useState<string | null>(null);
+  const [, setJobStatus] = useState<string | null>(null);
+  const [detailedStatus, setDetailedStatus] = useState<any | null>(null);
+  const [isUploadingImages, setIsUploadingImages] = useState(false);
 
   const setCenter = useAreaStore((state) => state.setCenter);
+  const setFeatures = useAreaStore((state) => state.setFeatures);
   const appendAreas = useAreaStore((state) => state.appendAreas);
   const setAction = useActionStore((state) => state.setAction);
   const setFleet = useActionStore((state) => state.setFleet);
@@ -111,6 +119,7 @@ function App() {
     console.log(data, "AAEE");
     setIsNextButtonDisabled(false);
     setBuildings([]);
+    setFeatures([]);
     setHasFetchedBuildings(false);
   };
 
@@ -128,7 +137,7 @@ function App() {
     const west = areaData[1].lng;
     const north = areaData[0].lat;
     const east = areaData[0].lng;
-    const query = `[out:json][timeout:25];(way["building"]( ${south},${west},${north},${east} );relation["building"]( ${south},${west},${north},${east} ););out body geom;`;
+    const query = `[out:json][timeout:40];(way["building"](${south},${west},${north},${east});relation["building"](${south},${west},${north},${east});way["highway"](${south},${west},${north},${east});way["leisure"~"park|garden|nature_reserve"](${south},${west},${north},${east});way["landuse"~"forest|wood|grass|orchard|recreation_ground"](${south},${west},${north},${east});way["natural"~"wood|water|tree_row"](${south},${west},${north},${east});way["waterway"](${south},${west},${north},${east});node["natural"="tree"](${south},${west},${north},${east}););out body geom;`;
     try {
       const response = await fetch("https://overpass-api.de/api/interpreter", {
         method: "POST",
@@ -136,14 +145,29 @@ function App() {
         headers: { "Content-Type": "application/x-www-form-urlencoded" },
       });
       const data = await response.json();
-      const blds: Building[] = data.elements.map((element) => ({
+      const features: GeoFeature[] = data.elements.map((element) => ({
         id: element.id,
         tags: element.tags,
+        featureType: element.tags?.building
+          ? "building"
+          : element.tags?.highway
+            ? "road"
+            : element.tags?.natural === "tree"
+              ? "tree"
+              : element.tags?.natural === "tree_row"
+                ? "tree"
+              : element.tags?.natural === "water" || element.tags?.waterway
+                ? "water"
+                : "green",
         geometry: element.geometry
           ? element.geometry.map((pt) => ({ lat: pt.lat, lng: pt.lon }))
-          : undefined,
+          : element.lat !== undefined && element.lon !== undefined
+            ? [{ lat: element.lat, lng: element.lon }]
+            : undefined,
       }));
+      const blds: Building[] = features.filter((feature) => feature.featureType === "building");
       setBuildings(blds);
+      setFeatures(features);
       appendAreas(blds);
       setHasFetchedBuildings(true);
     } catch (error) {
@@ -154,9 +178,17 @@ function App() {
   };
 
   const handleClickNextStep = async () => {
-    if (step == 0 && checkIsBig()) {
-      setIsWarnModal(true);
-      return false;
+    if (step == 0) {
+      if (uploadedFiles.length > 0) {
+        const id = await uploadJob(uploadedFiles);
+        if (id) {
+          pollJob(id);
+        }
+      }
+      if (checkIsBig()) {
+        setIsWarnModal(true);
+        return false;
+      }
     }
     if (step == 1 && !hasFetchedBuildings) {
       await requestBuildings();
@@ -173,6 +205,44 @@ function App() {
     setIsExportModal(true);
   };
 
+  async function uploadJob(files: File[]) {
+    if (!files || files.length === 0) return null;
+    setIsUploadingImages(true);
+    const fd = new FormData();
+    files.forEach((f) => fd.append('images', f));
+    try {
+      const resp = await fetch('http://localhost:3000/api/jobs', { method: 'POST', body: fd });
+      const json = await resp.json();
+      return json.jobId;
+    } catch (err) {
+      console.error('Upload failed', err);
+      return null;
+    } finally {
+      setIsUploadingImages(false);
+    }
+  }
+  async function pollJob(id: string) {
+    setJobId(id);
+    setJobStatus('queued');
+    const poll = setInterval(async () => {
+      try {
+        const res = await fetch(`http://localhost:3000/api/jobs/${id}/status`);
+        if (!res.ok) throw new Error('status_failed');
+        const j = await res.json();
+        setJobStatus(j.status || 'unknown');
+        // store the detailed status object for JobStatus component
+        setDetailedStatus(j);
+        if (j.status === 'failed') {
+          clearInterval(poll);
+        } else if (j.status === 'finished' || j.status === 'done' || j.status === 'success') {
+          clearInterval(poll);
+        }
+      } catch (err) {
+        console.error('poll err', err);
+      }
+    }, 2000);
+  }
+
   useEffect(() => {
     checkFleetLogin();
   }, []);
@@ -180,6 +250,7 @@ function App() {
   return (
     <div css={css({ height: "100%", width: "100%" })}>
       <TopNav step={step} />
+      <JobStatus jobId={jobId} statusData={detailedStatus} />
 
       <FullscreenModal isOpen={steps[step] == "front"}>
         <Column gap="1rem">
@@ -194,6 +265,32 @@ function App() {
             onRemove={handleRemove}
             onDone={handleDone}
           ></MapComponent>
+
+          <div
+            css={css({
+              marginTop: "0.5rem",
+              paddingTop: "1rem",
+              borderTop: "1px solid rgba(0, 0, 0, 0.08)",
+            })}
+          >
+            <Column gap="0.5rem">
+              <div css={css({ fontWeight: 600, fontSize: "14px", color: "#5b5d63" })}>
+                Add Map Image (Optional)
+              </div>
+              <Description>
+                Upload photos of the area. This is optional - you can still
+                select the location on the map and continue as usual.
+              </Description>
+              <UploadImages onSelect={(files) => setUploadedFiles(files)} />
+              {uploadedFiles.length > 0 && (
+                <div css={css({ color: "#6b7280", fontSize: "12px" })}>
+                  {isUploadingImages
+                    ? "Uploading selected images..."
+                    : `${uploadedFiles.length} image${uploadedFiles.length === 1 ? "" : "s"} selected. They will be uploaded when you click Next Step.`}
+                </div>
+              )}
+            </Column>
+          </div>
         </Column>
       </FullscreenModal>
 
@@ -297,7 +394,7 @@ function App() {
         </Column>
       </Modal>
 
-      <Space></Space>
+      <Space step={step}></Space>
     </div>
   );
 }

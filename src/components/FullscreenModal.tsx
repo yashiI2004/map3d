@@ -25,6 +25,8 @@ export function FullscreenModal({
           padding: "2rem",
           paddingTop: "4rem",
           width: "100%",
+          maxHeight: "100%",
+          overflowY: "auto",
         })}
       >
         {children}
