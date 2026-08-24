@@ -5,7 +5,7 @@ import { Title } from "@/components/text/Title";
 import { Description } from "@/components/text/Description";
 import { Column } from "@/components/flex/Column";
 import { MapComponent } from "@/components/map/SelectMap";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { UploadImages } from "@/components/UploadImages";
 import { JobStatus } from "@/components/JobStatus";
 import {
@@ -33,6 +33,24 @@ from { transform: rotate(0deg); }
 to { transform: rotate(360deg); }
 `;
 
+type SelectedBounds = {
+  north: number;
+  east: number;
+  south: number;
+  west: number;
+};
+
+function toSelectedBounds(data: any[]): SelectedBounds {
+  const first = data[0];
+  const second = data[1];
+  return {
+    north: Math.max(first.lat, second.lat),
+    east: Math.max(first.lng, second.lng),
+    south: Math.min(first.lat, second.lat),
+    west: Math.min(first.lng, second.lng),
+  };
+}
+
 function App() {
   const [isNextButtonDisabled, setIsNextButtonDisabled] = useState(true);
   const [areaData, setAreaData] = useState([]);
@@ -51,6 +69,15 @@ function App() {
   const [, setJobStatus] = useState<string | null>(null);
   const [detailedStatus, setDetailedStatus] = useState<any | null>(null);
   const [isUploadingImages, setIsUploadingImages] = useState(false);
+  const [debugData, setDebugData] = useState<{
+    bounds: SelectedBounds;
+    featureCount: number;
+    buildingCount: number;
+    roadCount: number;
+    treeCount: number;
+    extent: { minLat: number; maxLat: number; minLon: number; maxLon: number } | null;
+  } | null>(null);
+  const requestRef = useRef<{ id: number; controller: AbortController | null }>({ id: 0, controller: null });
 
   const setCenter = useAreaStore((state) => state.setCenter);
   const setFeatures = useAreaStore((state) => state.setFeatures);
@@ -114,37 +141,70 @@ function App() {
   };
 
   const handleDone = (data) => {
+    requestRef.current.controller?.abort();
+    requestRef.current = { id: requestRef.current.id + 1, controller: null };
     setAreaData(data);
     setCenter(data);
-    console.log(data, "AAEE");
+    const bounds = toSelectedBounds(data);
+    console.log("SELECTED LOCATION", {
+      latitude: (bounds.north + bounds.south) / 2,
+      longitude: (bounds.east + bounds.west) / 2,
+    });
+    console.log("SELECTED BOUNDING BOX", bounds);
     setIsNextButtonDisabled(false);
     setBuildings([]);
+    appendAreas([]);
     setFeatures([]);
+    setDebugData(null);
     setHasFetchedBuildings(false);
   };
 
   const handleRemove = () => {
+    requestRef.current.controller?.abort();
+    requestRef.current = { id: requestRef.current.id + 1, controller: null };
     setAreaData([]);
     setIsNextButtonDisabled(true);
     setBuildings([]);
+    appendAreas([]);
+    setFeatures([]);
+    setDebugData(null);
     setHasFetchedBuildings(false);
   };
 
   const requestBuildings = async () => {
+    const selectedBounds = toSelectedBounds(areaData);
+    const requestId = requestRef.current.id + 1;
+    requestRef.current.controller?.abort();
+    const controller = new AbortController();
+    requestRef.current = { id: requestId, controller };
     setIsFetchingBuildings(true);
 
-    const south = areaData[1].lat;
-    const west = areaData[1].lng;
-    const north = areaData[0].lat;
-    const east = areaData[0].lng;
+    const { south, west, north, east } = selectedBounds;
     const query = `[out:json][timeout:40];(way["building"](${south},${west},${north},${east});relation["building"](${south},${west},${north},${east});way["highway"](${south},${west},${north},${east});way["leisure"~"park|garden|nature_reserve"](${south},${west},${north},${east});way["landuse"~"forest|wood|grass|orchard|recreation_ground"](${south},${west},${north},${east});way["natural"~"wood|water|tree_row"](${south},${west},${north},${east});way["waterway"](${south},${west},${north},${east});node["natural"="tree"](${south},${west},${north},${east}););out body geom;`;
+    console.log("OVERPASS BOUNDING BOX", selectedBounds);
+    console.log("OVERPASS QUERY", query);
     try {
       const response = await fetch("https://overpass-api.de/api/interpreter", {
         method: "POST",
         body: query,
         headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        signal: controller.signal,
       });
       const data = await response.json();
+      if (requestRef.current.id !== requestId) return;
+      const coordinates = data.elements.flatMap((element) =>
+        element.geometry?.map((point) => ({ lat: point.lat, lon: point.lon })) ||
+        (element.lat !== undefined && element.lon !== undefined ? [{ lat: element.lat, lon: element.lon }] : [])
+      );
+      const extent = coordinates.length
+        ? {
+            minLat: Math.min(...coordinates.map((point) => point.lat)),
+            maxLat: Math.max(...coordinates.map((point) => point.lat)),
+            minLon: Math.min(...coordinates.map((point) => point.lon)),
+            maxLon: Math.max(...coordinates.map((point) => point.lon)),
+          }
+        : null;
+      console.log("RETURNED OSM EXTENT", extent);
       const features: GeoFeature[] = data.elements.map((element) => ({
         id: element.id,
         tags: element.tags,
@@ -166,14 +226,23 @@ function App() {
             : undefined,
       }));
       const blds: Building[] = features.filter((feature) => feature.featureType === "building");
+      setDebugData({
+        bounds: selectedBounds,
+        featureCount: features.length,
+        buildingCount: blds.length,
+        roadCount: features.filter((feature) => feature.featureType === "road").length,
+        treeCount: features.filter((feature) => feature.featureType === "tree").length,
+        extent,
+      });
       setBuildings(blds);
       setFeatures(features);
       appendAreas(blds);
       setHasFetchedBuildings(true);
     } catch (error) {
+      if (error instanceof DOMException && error.name === "AbortError") return;
       console.error("Error fetching building data:", error);
     } finally {
-      setIsFetchingBuildings(false);
+      if (requestRef.current.id === requestId) setIsFetchingBuildings(false);
     }
   };
 
@@ -307,6 +376,15 @@ function App() {
               buildings={buildings}
               loading={isFetchingBuildings}
             />
+            {import.meta.env.DEV && debugData && (
+              <div css={css({ fontSize: "11px", color: "#374151", lineHeight: 1.5 })}>
+                <strong>Selected area diagnostics</strong><br />
+                Lat: {((debugData.bounds.north + debugData.bounds.south) / 2).toFixed(6)} | Lon: {((debugData.bounds.east + debugData.bounds.west) / 2).toFixed(6)}<br />
+                BBox: S {debugData.bounds.south.toFixed(6)}, W {debugData.bounds.west.toFixed(6)}, N {debugData.bounds.north.toFixed(6)}, E {debugData.bounds.east.toFixed(6)}<br />
+                OSM features: {debugData.featureCount} | Buildings: {debugData.buildingCount} | Roads: {debugData.roadCount} | Trees: {debugData.treeCount}<br />
+                Data extent: {debugData.extent ? `${debugData.extent.minLat.toFixed(6)} to ${debugData.extent.maxLat.toFixed(6)}, ${debugData.extent.minLon.toFixed(6)} to ${debugData.extent.maxLon.toFixed(6)}` : "none"}
+              </div>
+            )}
           </Column>
         </Column>
       </FullscreenModal>

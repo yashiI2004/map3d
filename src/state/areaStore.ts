@@ -1,6 +1,6 @@
 import { create } from "zustand";
 
-export type MarkerType = "enemy" | "hospital" | "rescue" | "note" | "soldier";
+export type MarkerType = "enemy" | "hospital" | "rescue" | "note" | "soldier" | "checkpoint";
 
 export type Marker = {
   id: string;
@@ -144,16 +144,7 @@ const writeSoldiers = (soldiers: Soldier[]) => {
 export const useAreaStore = create<AreaStore>((set, get) => ({
   areas: [],
   features: [],
-  center: [
-    {
-      lat: 40.8,
-      lng: -73.95,
-    },
-    {
-      lat: 40.83,
-      lng: -73.88,
-    },
-  ],
+  center: [],
   markers: readMarkers(),
   soldiers: readSoldiers(),
   selectedSoldierId: null,

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Canvas, extend, ReactThreeFiber, useThree } from "@react-three/fiber";
+import { Canvas, extend, ReactThreeFiber, useFrame, useThree } from "@react-three/fiber";
 import { Soldier, useAreaStore } from "@/state/areaStore";
 import { Html, Sky, Environment, Line, Edges } from "@react-three/drei";
 import * as THREE from "three";
@@ -46,6 +46,25 @@ function CameraFocus({ point }: { point: { x: number; z: number } | null }) {
     camera.position.set(point.x + 18, camera.position.y, point.z + 18);
     camera.lookAt(point.x, 0, point.z);
   }, [camera, point]);
+  return null;
+}
+
+function CameraSurfaceGuard({ samples, center }: { samples: ElevationSample[]; center: any[] }) {
+  const { camera } = useThree();
+
+  useFrame(() => {
+    if (!center?.[0] || !center?.[1]) return;
+    const refLat = (center[1].lat + center[0].lat) / 2;
+    const refLng = (center[1].lng + center[0].lng) / 2;
+    const latitude = refLat - camera.position.z / scale;
+    const longitude = refLng + camera.position.x / (scale * Math.cos((refLat * Math.PI) / 180));
+    const terrainHeight = elevationAt(samples, { lat: latitude, lng: longitude }) - 0.12;
+    const minimumHeight = terrainHeight + 0.8;
+    if (camera.position.y < minimumHeight) {
+      camera.position.y = minimumHeight;
+    }
+  });
+
   return null;
 }
 
@@ -389,6 +408,12 @@ function MarkerModel({ marker, baseHeight = 0 }: { marker: any; baseHeight?: num
           </mesh>
         </group>
       )}
+      {marker.type === "checkpoint" && (
+        <mesh castShadow receiveShadow>
+          <octahedronGeometry args={[0.24, 0]} />
+          <meshStandardMaterial color="#dc2626" emissive="#7f1d1d" emissiveIntensity={0.25} />
+        </mesh>
+      )}
       {marker.note && (
         <Html position={[0, 0.8, 0]} center>
           <div
@@ -564,6 +589,7 @@ function Vegetation({
   samples,
   placementMode,
   onTerrainClick,
+  checkpointMode,
 }: {
   areas: any[];
   center: any[];
@@ -572,6 +598,7 @@ function Vegetation({
   samples: ElevationSample[];
   placementMode: "normal" | "add" | "move";
   onTerrainClick: (point: { x: number; z: number; latitude: number; longitude: number; altitude: number }) => void;
+  checkpointMode: boolean;
 }) {
   if (!center?.[0] || !center?.[1]) return null;
 
@@ -645,22 +672,17 @@ function Vegetation({
       return;
     }
 
+    if (checkpointMode) {
+      addMarker({ type: "checkpoint", x: event.point.x, z: event.point.z });
+      return;
+    }
+
     if (advanceMode) {
       addAdvancePoint({ x: event.point.x, z: event.point.z });
       return;
     }
 
-    if (selectedMarkerType === "soldier") {
-      onPreviewSoldier({ x: event.point.x, z: event.point.z });
-      return;
-    }
-
-    addMarker({
-      type: selectedMarkerType,
-      x: event.point.x,
-      z: event.point.z,
-      note: noteText.trim() || undefined,
-    });
+    return;
   };
 
   const advanceShape = advancePoints.length >= 3 ? useMemo(() => {
@@ -856,13 +878,13 @@ export function Space({ step = 2 }: { step?: number }) {
   const selectSoldier = useAreaStore((state) => state.selectSoldier);
   const toggleMeasurementSoldier = useAreaStore((state) => state.toggleMeasurementSoldier);
   const clearMeasurementSoldiers = useAreaStore((state) => state.clearMeasurementSoldiers);
-  const [realCenter, setRealCenter] = useState<any>();
   const center = useAreaStore((state) => state.center);
-  const refLat = (center[1].lat + center[0].lat) / 2;
-  const refLng = (center[1].lng + center[0].lng) / 2;
+  const refLat = center.length >= 2 ? (center[1].lat + center[0].lat) / 2 : 0;
+  const refLng = center.length >= 2 ? (center[1].lng + center[0].lng) / 2 : 0;
   const samples = useElevation(center, areas.length > 0);
   const [placementMode, setPlacementMode] = useState<"normal" | "add" | "move">("normal");
   const [measurementMode, setMeasurementMode] = useState(false);
+  const [checkpointMode, setCheckpointMode] = useState(false);
   const [focusPoint, setFocusPoint] = useState<{ x: number; z: number } | null>(null);
 
   function project(lat: number, lng: number) {
@@ -903,10 +925,6 @@ export function Space({ step = 2 }: { step?: number }) {
     });
     return result;
   };
-
-  useEffect(() => {
-    setRealCenter(center);
-  }, [areas]);
 
   const buildingsData = areaData();
   const [selectedBuilding, setSelectedBuilding] = useState<null | {
@@ -968,6 +986,7 @@ export function Space({ step = 2 }: { step?: number }) {
       <Canvas style={{ width: "100%", height: "100%" }} camera={{ fov: 90, near: 0.1, far: 7000 }} shadows>
         <CameraFrame center={center} />
         <CameraFocus point={focusPoint} />
+        <CameraSurfaceGuard samples={samples} center={center} />
         <ambientLight intensity={Math.PI / 2} />
         <spotLight position={[10, 10, 10]} angle={0.15} penumbra={1} decay={0} intensity={Math.PI} />
         {buildingsData.map((item, index) => (
@@ -986,7 +1005,7 @@ export function Space({ step = 2 }: { step?: number }) {
         ))}
         {measurementMode && measurementSoldierIds.length >= 2 && <DistanceMeasurements soldiers={soldiers.filter((soldier) => measurementSoldierIds.includes(soldier.id))} />}
 
-        <Roads features={features} center={realCenter} samples={samples} />
+        <Roads features={features} center={center} samples={samples} />
         <GeographicFeatures features={features} center={center} samples={samples} />
         <Vegetation
           areas={areas}
@@ -996,6 +1015,7 @@ export function Space({ step = 2 }: { step?: number }) {
           samples={samples}
           placementMode={placementMode}
           onTerrainClick={handleTerrainClick}
+          checkpointMode={checkpointMode}
         />
         <pointLight position={[-10, -10, -10]} decay={0} intensity={Math.PI} />
         <Car />
@@ -1074,18 +1094,26 @@ export function Space({ step = 2 }: { step?: number }) {
         </div>
         <button
           type="button"
-          onClick={() => { setPlacementMode(placementMode === "add" ? "normal" : "add"); selectSoldier(null); }}
+          onClick={() => { setPlacementMode(placementMode === "add" ? "normal" : "add"); selectSoldier(null); setCheckpointMode(false); setMeasurementMode(false); clearMeasurementSoldiers(); }}
           style={{ width: "100%", border: 0, borderRadius: 7, padding: "8px 10px", background: placementMode === "add" ? "#1d4ed8" : "#0f766e", color: "#fff", cursor: "pointer", fontWeight: 700 }}
         >
           {placementMode === "add" ? "Click terrain to place" : "+ Add Soldier"}
         </button>
         <button
           type="button"
-          onClick={() => { setMeasurementMode(!measurementMode); if (measurementMode) clearMeasurementSoldiers(); setPlacementMode("normal"); }}
+          onClick={() => { setMeasurementMode(!measurementMode); if (measurementMode) clearMeasurementSoldiers(); setPlacementMode("normal"); setCheckpointMode(false); }}
           style={{ width: "100%", marginTop: 6, border: "1px solid #fecaca", borderRadius: 7, padding: "8px 10px", background: measurementMode ? "#991b1b" : "#fff1f2", color: measurementMode ? "#fff" : "#991b1b", cursor: "pointer", fontWeight: 700 }}
         >
           {measurementMode ? "Distance Mode Active" : "Measure Distance"}
         </button>
+        <button
+          type="button"
+          onClick={() => { setCheckpointMode(!checkpointMode); setPlacementMode("normal"); setMeasurementMode(false); clearMeasurementSoldiers(); }}
+          style={{ width: "100%", marginTop: 6, border: "1px solid #fecaca", borderRadius: 7, padding: "8px 10px", background: checkpointMode ? "#b91c1c" : "#fff", color: checkpointMode ? "#fff" : "#991b1b", cursor: "pointer", fontWeight: 700 }}
+        >
+          {checkpointMode ? "Add Checkpoint Mode Active" : "+ Add Checkpoint"}
+        </button>
+        {checkpointMode && <div style={{ marginTop: 7, padding: 7, borderRadius: 6, background: "#fff1f2", color: "#991b1b" }}>Click the terrain to place a checkpoint.</div>}
         {measurementMode && <div style={{ marginTop: 7, padding: 7, borderRadius: 6, background: "#fff1f2", color: "#991b1b" }}>Select 2 or more soldiers to measure distance.</div>}
         {placementMode === "move" && (
           <div style={{ marginTop: 8, padding: 8, borderRadius: 7, background: "#fef3c7", color: "#92400e" }}>
