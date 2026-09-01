@@ -25,6 +25,11 @@ export default defineConfig({
         changeOrigin: true,
         rewrite: (path) => path.replace(/^\/api\/elevation/, "/v1/aster30m"),
       },
+      "/api/imagery": {
+        target: "https://tiles.maps.eox.at",
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/api\/imagery/, "/wms"),
+      },
     },
   },
 });

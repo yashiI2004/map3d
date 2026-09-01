@@ -407,8 +407,8 @@ export function MapComponent({
       </div>
 
       <MapContainer
-        center={[40.8, -73.95]}
-        zoom={13}
+        center={[20, 0]}
+        zoom={2}
         minZoom={2}
         maxZoom={20}
         worldCopyJump
@@ -421,9 +421,8 @@ export function MapComponent({
       >
         <LocationSearch />
         <TileLayer
-          attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>'
-          url="https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png"
-          subdomains="abcd"
+          attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+          url="https://tile.openstreetmap.org/{z}/{x}/{y}.png"
           maxZoom={20}
         />
         <RectangleSelector

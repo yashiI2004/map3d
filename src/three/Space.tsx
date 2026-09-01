@@ -16,11 +16,28 @@ type ElevationSample = Point & { elevation: number };
 
 function elevationAt(samples: ElevationSample[], point: Point) {
   if (!samples.length) return 0;
-  return samples.reduce((nearest, sample) => {
-    const distance = (sample.lat - point.lat) ** 2 + (sample.lng - point.lng) ** 2;
-    const nearestDistance = (nearest.lat - point.lat) ** 2 + (nearest.lng - point.lng) ** 2;
-    return distance < nearestDistance ? sample : nearest;
-  }).elevation;
+  const latitudes = samples.map((sample) => sample.lat);
+  const longitudes = samples.map((sample) => sample.lng);
+  const south = Math.min(...latitudes);
+  const north = Math.max(...latitudes);
+  const west = Math.min(...longitudes);
+  const east = Math.max(...longitudes);
+  const gridSize = Math.round(Math.sqrt(samples.length));
+
+  if (gridSize < 2 || north === south || east === west) return samples[0].elevation;
+
+  const rowPosition = THREE.MathUtils.clamp(((point.lat - south) / (north - south)) * (gridSize - 1), 0, gridSize - 1);
+  const columnPosition = THREE.MathUtils.clamp(((point.lng - west) / (east - west)) * (gridSize - 1), 0, gridSize - 1);
+  const row0 = Math.floor(rowPosition);
+  const row1 = Math.min(gridSize - 1, row0 + 1);
+  const column0 = Math.floor(columnPosition);
+  const column1 = Math.min(gridSize - 1, column0 + 1);
+  const rowWeight = rowPosition - row0;
+  const columnWeight = columnPosition - column0;
+  const sampleAt = (row: number, column: number) => samples[row * gridSize + column]?.elevation ?? 0;
+  const top = THREE.MathUtils.lerp(sampleAt(row0, column0), sampleAt(row0, column1), columnWeight);
+  const bottom = THREE.MathUtils.lerp(sampleAt(row1, column0), sampleAt(row1, column1), columnWeight);
+  return THREE.MathUtils.lerp(top, bottom, rowWeight);
 }
 
 function CameraFrame({ center }: { center: any[] }) {
@@ -80,23 +97,80 @@ function useElevation(center: any[], enabled: boolean) {
     const north = Math.max(center[0].lat, center[1].lat);
     const west = Math.min(center[0].lng, center[1].lng);
     const east = Math.max(center[0].lng, center[1].lng);
-    const points = Array.from({ length: 25 }, (_, index) => {
-      const row = Math.floor(index / 5);
-      const column = index % 5;
-      return { lat: south + ((north - south) * row) / 4, lng: west + ((east - west) * column) / 4 };
+    const gridSize = 17;
+    const points = Array.from({ length: gridSize * gridSize }, (_, index) => {
+      const row = Math.floor(index / gridSize);
+      const column = index % gridSize;
+      return { lat: south + ((north - south) * row) / (gridSize - 1), lng: west + ((east - west) * column) / (gridSize - 1) };
     });
-    const locations = points.map((point) => `${point.lat},${point.lng}`).join("|");
-    fetch(`/api/elevation?locations=${encodeURIComponent(locations)}`)
-      .then((response) => response.ok ? response.json() : Promise.reject(new Error("elevation unavailable")))
-      .then((data) => setSamples(data.results.map((result: any, index: number) => ({ ...points[index], elevation: result.elevation }))))
-      .catch(() => setSamples([]));
+    const controller = new AbortController();
+    const chunks = Array.from({ length: Math.ceil(points.length / 80) }, (_, index) => points.slice(index * 80, (index + 1) * 80));
+
+    Promise.all(chunks.map(async (chunk) => {
+      const locations = chunk.map((point) => `${point.lat},${point.lng}`).join("|");
+      const response = await fetch(`/api/elevation?locations=${encodeURIComponent(locations)}`, { signal: controller.signal });
+      if (!response.ok) throw new Error("elevation unavailable");
+      const data = await response.json();
+      return data.results.map((result: any, index: number) => ({ ...chunk[index], elevation: result.elevation }));
+    }))
+      .then((resultChunks) => setSamples(resultChunks.flat()))
+      .catch((error) => {
+        if (error instanceof DOMException && error.name === "AbortError") return;
+        setSamples([]);
+      });
+
+    return () => controller.abort();
   }, [center, enabled]);
 
   return samples;
 }
 
+function useImagery(center: any[], enabled: boolean) {
+  const [texture, setTexture] = useState<THREE.Texture | null>(null);
+
+  useEffect(() => {
+    if (!enabled || !center?.[0] || !center?.[1]) {
+      setTexture(null);
+      return;
+    }
+    const south = Math.min(center[0].lat, center[1].lat);
+    const north = Math.max(center[0].lat, center[1].lat);
+    const west = Math.min(center[0].lng, center[1].lng);
+    const east = Math.max(center[0].lng, center[1].lng);
+    const params = new URLSearchParams({
+      service: "WMS",
+      request: "GetMap",
+      version: "1.1.1",
+      layers: "s2cloudless-2019",
+      styles: "",
+      format: "image/jpeg",
+      srs: "EPSG:4326",
+      bbox: `${west},${south},${east},${north}`,
+      width: "2048",
+      height: "2048",
+    });
+    const loader = new THREE.TextureLoader();
+    const currentTexture = loader.load(`/api/imagery?${params.toString()}`, (loadedTexture) => {
+      loadedTexture.colorSpace = THREE.SRGBColorSpace;
+      loadedTexture.wrapS = THREE.ClampToEdgeWrapping;
+      loadedTexture.wrapT = THREE.ClampToEdgeWrapping;
+      setTexture(loadedTexture);
+    });
+
+    return () => {
+      currentTexture.dispose();
+      setTexture(null);
+    };
+  }, [center, enabled]);
+
+  return texture;
+}
+
 function getBuildingColor(tags: any) {
-  return "#facc15";
+  if (tags?.building === "industrial" || tags?.building === "warehouse") return "#b8b6ac";
+  if (tags?.building === "commercial" || tags?.building === "retail") return "#c5b9a4";
+  if (tags?.building === "school" || tags?.building === "university") return "#b9a58d";
+  return "#c9c4b8";
 }
 
 function Building({
@@ -134,11 +208,8 @@ function Building({
     ? parseFloat(tags.height)
     : extrudeSettings.depth;
   const defaultBuildingLevels = tags["building:levels"] || Math.round(extrudeSettings.depth / 2.2);
-  const isSaiVidya =
-    typeof tags.name === "string" &&
-    tags.name.toLowerCase().includes("sai vidya");
-  const buildingHeight = isSaiVidya ? 8.0 : defaultBuildingHeight;
-  const buildingLevels = isSaiVidya ? 2 : defaultBuildingLevels;
+  const buildingHeight = defaultBuildingHeight;
+  const buildingLevels = defaultBuildingLevels;
 
   const edges = shapePoints.map((point, index) => {
     const next = shapePoints[(index + 1) % shapePoints.length];
@@ -604,6 +675,7 @@ function Vegetation({
 
   const refLat = (center[1].lat + center[0].lat) / 2;
   const refLng = (center[1].lng + center[0].lng) / 2;
+  const imagery = useImagery(center, center.length >= 2);
   const markers = useAreaStore((state) => state.markers);
   const selectedMarkerType = useAreaStore((state) => state.selectedMarkerType);
   const noteText = useAreaStore((state) => state.noteText);
@@ -637,6 +709,15 @@ function Vegetation({
     geometry.computeVertexNormals();
     return geometry;
   }, [center, refLat, refLng, samples]);
+
+  const terrainBlock = useMemo(() => {
+    const width = Math.max(5000, Math.abs(center[1].lng - center[0].lng) * scale * Math.cos((refLat * Math.PI) / 180));
+    const depth = Math.max(5000, Math.abs(center[1].lat - center[0].lat) * scale);
+    const minimumElevation = samples.length ? Math.min(...samples.map((sample) => sample.elevation)) : 0;
+    const maximumElevation = samples.length ? Math.max(...samples.map((sample) => sample.elevation)) : 0;
+    const height = Math.max(12, maximumElevation - minimumElevation + 12);
+    return { width, depth, height, y: minimumElevation - height / 2 };
+  }, [center, refLat, samples]);
 
   const areaPolygons = useMemo(
     () =>
@@ -709,8 +790,12 @@ function Vegetation({
 
   return (
     <group userData={{ exportToGLB: true }}>
+      <mesh position={[0, terrainBlock.y, 0]} receiveShadow userData={{ exportToGLB: true }}>
+        <boxGeometry args={[terrainBlock.width, terrainBlock.height, terrainBlock.depth]} />
+        <meshStandardMaterial color="#78816f" roughness={1} metalness={0} />
+      </mesh>
       <mesh rotation={[-Math.PI / 2, 0, 0]} receiveShadow position={[0, -0.12, 0]} onPointerDown={handlePlaceMarker} geometry={terrainGeometry} userData={{ exportToGLB: true }}>
-        <meshStandardMaterial color="#3e6c2f" roughness={0.92} metalness={0.04} />
+        <meshStandardMaterial map={imagery} color={imagery ? "#ffffff" : "#6f825b"} roughness={0.92} metalness={0.04} />
       </mesh>
 
       {advanceMode && (
@@ -881,7 +966,7 @@ export function Space({ step = 2 }: { step?: number }) {
   const center = useAreaStore((state) => state.center);
   const refLat = center.length >= 2 ? (center[1].lat + center[0].lat) / 2 : 0;
   const refLng = center.length >= 2 ? (center[1].lng + center[0].lng) / 2 : 0;
-  const samples = useElevation(center, areas.length > 0);
+  const samples = useElevation(center, center.length >= 2);
   const [placementMode, setPlacementMode] = useState<"normal" | "add" | "move">("normal");
   const [measurementMode, setMeasurementMode] = useState(false);
   const [checkpointMode, setCheckpointMode] = useState(false);
@@ -914,8 +999,8 @@ export function Space({ step = 2 }: { step?: number }) {
       centroid.lng /= bld.geometry.length;
       let heightValue = parseFloat(bld.tags.height || "");
       const heightLevels = parseFloat(bld.tags["building:levels"] || "");
-      if (isNaN(heightValue)) heightValue = 10;
       if (isNaN(heightValue) && !isNaN(heightLevels)) heightValue = heightLevels * 2.2;
+      if (isNaN(heightValue)) heightValue = 10;
       const extrudeSettings = {
         steps: 1,
         depth: heightValue,
@@ -927,6 +1012,21 @@ export function Space({ step = 2 }: { step?: number }) {
   };
 
   const buildingsData = areaData();
+
+  useEffect(() => {
+    if (!import.meta.env.DEV || center.length < 2) return;
+    console.log("MODEL CENTER", { latitude: refLat, longitude: refLng });
+    areas.slice(0, 3).forEach((building: any) => {
+      const point = building.geometry?.[0];
+      if (!point) return;
+      const projected = project(point.lat, point.lng);
+      console.log("FEATURE COORDINATE", {
+        osm: { latitude: point.lat, longitude: point.lng },
+        three: { x: projected.x, y: elevationAt(samples, point), z: -projected.y },
+      });
+    });
+  }, [areas, center, refLat, refLng, samples]);
+
   const [selectedBuilding, setSelectedBuilding] = useState<null | {
     tags: any;
     footprintWidth: number;
@@ -987,8 +1087,9 @@ export function Space({ step = 2 }: { step?: number }) {
         <CameraFrame center={center} />
         <CameraFocus point={focusPoint} />
         <CameraSurfaceGuard samples={samples} center={center} />
-        <ambientLight intensity={Math.PI / 2} />
-        <spotLight position={[10, 10, 10]} angle={0.15} penumbra={1} decay={0} intensity={Math.PI} />
+        <color attach="background" args={["#dfe5e8"]} />
+        <ambientLight intensity={1.1} />
+        <directionalLight position={[-180, 260, 140]} intensity={2.6} castShadow shadow-mapSize={[2048, 2048]} shadow-camera-far={5000} shadow-camera-left={-2500} shadow-camera-right={2500} shadow-camera-top={2500} shadow-camera-bottom={-2500} />
         {buildingsData.map((item, index) => (
           <Building
             key={index}
@@ -1017,7 +1118,7 @@ export function Space({ step = 2 }: { step?: number }) {
           onTerrainClick={handleTerrainClick}
           checkpointMode={checkpointMode}
         />
-        <pointLight position={[-10, -10, -10]} decay={0} intensity={Math.PI} />
+        <pointLight position={[-10, -10, -10]} decay={0} intensity={0.35} />
         <Car />
         <Export />
         <Sky distance={450000} sunPosition={[0, 1, 0]} inclination={0.4} azimuth={0.3} />

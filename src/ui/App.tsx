@@ -76,6 +76,7 @@ function App() {
     roadCount: number;
     treeCount: number;
     extent: { minLat: number; maxLat: number; minLon: number; maxLon: number } | null;
+    modelCenter: { lat: number; lon: number };
   } | null>(null);
   const requestRef = useRef<{ id: number; controller: AbortController | null }>({ id: 0, controller: null });
 
@@ -192,7 +193,15 @@ function App() {
       });
       const data = await response.json();
       if (requestRef.current.id !== requestId) return;
-      const coordinates = data.elements.flatMap((element) =>
+      const isInsideBounds = (point) =>
+        point.lat >= south && point.lat <= north && point.lon >= west && point.lon <= east;
+      const boundedElements = data.elements.filter((element) => {
+        const points = element.geometry || (element.lat !== undefined && element.lon !== undefined
+          ? [{ lat: element.lat, lon: element.lon }]
+          : []);
+        return points.some(isInsideBounds);
+      });
+      const coordinates = boundedElements.flatMap((element) =>
         element.geometry?.map((point) => ({ lat: point.lat, lon: point.lon })) ||
         (element.lat !== undefined && element.lon !== undefined ? [{ lat: element.lat, lon: element.lon }] : [])
       );
@@ -205,7 +214,7 @@ function App() {
           }
         : null;
       console.log("RETURNED OSM EXTENT", extent);
-      const features: GeoFeature[] = data.elements.map((element) => ({
+      const features: GeoFeature[] = boundedElements.map((element) => ({
         id: element.id,
         tags: element.tags,
         featureType: element.tags?.building
@@ -233,6 +242,10 @@ function App() {
         roadCount: features.filter((feature) => feature.featureType === "road").length,
         treeCount: features.filter((feature) => feature.featureType === "tree").length,
         extent,
+        modelCenter: {
+          lat: (selectedBounds.north + selectedBounds.south) / 2,
+          lon: (selectedBounds.east + selectedBounds.west) / 2,
+        },
       });
       setBuildings(blds);
       setFeatures(features);
@@ -383,6 +396,7 @@ function App() {
                 BBox: S {debugData.bounds.south.toFixed(6)}, W {debugData.bounds.west.toFixed(6)}, N {debugData.bounds.north.toFixed(6)}, E {debugData.bounds.east.toFixed(6)}<br />
                 OSM features: {debugData.featureCount} | Buildings: {debugData.buildingCount} | Roads: {debugData.roadCount} | Trees: {debugData.treeCount}<br />
                 Data extent: {debugData.extent ? `${debugData.extent.minLat.toFixed(6)} to ${debugData.extent.maxLat.toFixed(6)}, ${debugData.extent.minLon.toFixed(6)} to ${debugData.extent.maxLon.toFixed(6)}` : "none"}
+                <br />Model center: {debugData.modelCenter.lat.toFixed(6)}, {debugData.modelCenter.lon.toFixed(6)}
               </div>
             )}
           </Column>
