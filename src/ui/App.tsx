@@ -1,5 +1,6 @@
 import { css, keyframes } from "@emotion/react";
 import { Space } from "../three/Space";
+import { IntroScreen } from "../three/IntroScreen";
 import { FullscreenModal } from "../components/FullscreenModal";
 import { Title } from "@/components/text/Title";
 import { Description } from "@/components/text/Description";
@@ -69,6 +70,8 @@ function App() {
   const [, setJobStatus] = useState<string | null>(null);
   const [detailedStatus, setDetailedStatus] = useState<any | null>(null);
   const [isUploadingImages, setIsUploadingImages] = useState(false);
+  const [showIntro, setShowIntro] = useState(true);
+  const [isTransitioningFromIntro, setIsTransitioningFromIntro] = useState(false);
   const [debugData, setDebugData] = useState<{
     bounds: SelectedBounds;
     featureCount: number;
@@ -97,6 +100,13 @@ function App() {
     } else {
       return false;
     }
+  };
+
+  const handleEnterFromIntro = () => {
+    setIsTransitioningFromIntro(true);
+    setTimeout(() => {
+      setShowIntro(false);
+    }, 1000);
   };
 
   const exportFile = () => {
@@ -331,6 +341,7 @@ function App() {
 
   return (
     <div css={css({ height: "100%", width: "100%" })}>
+      {showIntro && <IntroScreen onEnter={handleEnterFromIntro} isTransitioning={isTransitioningFromIntro} />}
       <TopNav step={step} />
       <JobStatus jobId={jobId} statusData={detailedStatus} />
 

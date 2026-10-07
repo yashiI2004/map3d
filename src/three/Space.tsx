@@ -47,7 +47,7 @@ function CameraFrame({ center }: { center: any[] }) {
     if (!center?.[0] || !center?.[1]) return;
     const width = Math.abs(center[1].lng - center[0].lng) * scale;
     const height = Math.abs(center[1].lat - center[0].lat) * scale;
-    const distance = Math.max(35, Math.max(width, height) * 0.9);
+    const distance = Math.max(35, Math.max(width, height) * 1.02);
     camera.position.set(0, distance * 0.72, distance);
     camera.lookAt(0, 0, 0);
     camera.updateProjectionMatrix();
@@ -1083,13 +1083,19 @@ export function Space({ step = 2 }: { step?: number }) {
 
   return (
     <div style={{ position: "relative", width: "100%", height: "100%" }}>
-      <Canvas style={{ width: "100%", height: "100%" }} camera={{ fov: 90, near: 0.1, far: 7000 }} shadows>
+      <Canvas
+        style={{ width: "100%", height: "100%" }}
+        camera={{ fov: 65, near: 0.1, far: 7000 }}
+        dpr={[1, 2]}
+        gl={{ antialias: true, powerPreference: "high-performance", outputColorSpace: THREE.SRGBColorSpace, toneMapping: THREE.ACESFilmicToneMapping, toneMappingExposure: 1.1 }}
+        shadows={{ type: THREE.PCFSoftShadowMap }}
+      >
         <CameraFrame center={center} />
         <CameraFocus point={focusPoint} />
         <CameraSurfaceGuard samples={samples} center={center} />
         <color attach="background" args={["#dfe5e8"]} />
-        <ambientLight intensity={1.1} />
-        <directionalLight position={[-180, 260, 140]} intensity={2.6} castShadow shadow-mapSize={[2048, 2048]} shadow-camera-far={5000} shadow-camera-left={-2500} shadow-camera-right={2500} shadow-camera-top={2500} shadow-camera-bottom={-2500} />
+        <ambientLight intensity={0.7} />
+        <directionalLight position={[-180, 260, 140]} intensity={3.1} castShadow shadow-mapSize={[4096, 4096]} shadow-camera-far={5000} shadow-camera-left={-2500} shadow-camera-right={2500} shadow-camera-top={2500} shadow-camera-bottom={-2500} shadow-bias={-0.0001} shadow-normalBias={0.02} />
         {buildingsData.map((item, index) => (
           <Building
             key={index}
