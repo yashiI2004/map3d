@@ -339,9 +339,12 @@ function App() {
     checkFleetLogin();
   }, []);
 
+  if (showIntro) {
+    return <IntroScreen onEnter={handleEnterFromIntro} isTransitioning={isTransitioningFromIntro} />;
+  }
+
   return (
     <div css={css({ height: "100%", width: "100%" })}>
-      {showIntro && <IntroScreen onEnter={handleEnterFromIntro} isTransitioning={isTransitioningFromIntro} />}
       <TopNav step={step} />
       <JobStatus jobId={jobId} statusData={detailedStatus} />
 
