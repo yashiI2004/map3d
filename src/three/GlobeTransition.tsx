@@ -36,6 +36,7 @@ type GlobeExplorerProps = {
 
 const GOOGLE_KEY = import.meta.env.VITE_GOOGLE_MAPS_API_KEY as string | undefined;
 const CESIUM_ION_TOKEN = import.meta.env.VITE_CESIUM_ION_ACCESS_TOKEN as string | undefined;
+const MAX_GENERATOR_AREA_SQUARE_METERS = 100_000_000;
 
 function formatCoordinate(selection: GlobeSelection | null) {
   if (!selection) return "Click the globe to choose a terrain location";
@@ -155,6 +156,12 @@ export function GlobeTransition({ onSelectionChange, onGenerateArea, onGeneratio
       center: centerFor(points),
       areaSquareMeters: calculateArea(points),
     };
+
+    if (area.areaSquareMeters > MAX_GENERATOR_AREA_SQUARE_METERS) {
+      setDetailsOpen(true);
+      setMessage("Selected area is too large for the existing TerraVision generator. Zoom in and select an area under 100 km².");
+      return;
+    }
 
     setAreaSelection(area);
     setSelection(area.center);
