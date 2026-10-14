@@ -59,8 +59,9 @@ function CameraFrame({ center, fitVersion = 0 }: { center: any[]; fitVersion?: n
     if (!center?.[0] || !center?.[1]) return;
     const width = Math.abs(center[1].lng - center[0].lng) * scale;
     const height = Math.abs(center[1].lat - center[0].lat) * scale;
-    const distance = Math.max(35, Math.max(width, height) * 1.02);
-    camera.position.set(0, distance * 0.72, distance);
+    const sceneSize = Math.max(120, Math.max(width, height));
+    const distance = Math.max(95, sceneSize * 1.18);
+    camera.position.set(distance * 0.72, distance * 0.78, distance);
     camera.lookAt(0, 0, 0);
     camera.updateProjectionMatrix();
   }, [camera, center, fitVersion]);
@@ -203,7 +204,7 @@ function Building({
   const [hovered, setHovered] = useState(false);
   const [clicked, setClicked] = useState(false);
   const buildingColor = getBuildingColor(tags);
-  const roofHeight = Math.max(0.2, Math.min(0.6, extrudeSettings.depth * 0.02));
+  const roofHeight = Math.max(0.35, Math.min(0.9, extrudeSettings.depth * 0.025));
   const shapePoints = shape.getPoints();
 
   const minX = Math.min(...shapePoints.map((point) => point.x));
@@ -281,24 +282,32 @@ function Building({
       </mesh>
       {edges.flatMap((edge, index) => {
         if (index === entranceIndex || edge.length < 8) return [];
-        const windowHeight = Math.min(extrudeSettings.depth * 0.14, 0.35);
+        const floorCount = Math.max(1, Math.min(10, Number(tags["building:levels"]) || Math.round(extrudeSettings.depth / 3)));
+        const floorHeight = extrudeSettings.depth / floorCount;
+        const windowHeight = Math.min(floorHeight * 0.38, 0.72);
         const windowCount = Math.max(1, Math.min(3, Math.floor(edge.length / 2.5)));
         const windowWidth = Math.min((edge.length - (windowCount - 1) * 0.15) / windowCount, 2.2);
-        return Array.from({ length: windowCount }).map((_, wi) => {
-          const offset = (wi - (windowCount - 1) / 2) * (windowWidth + 0.18);
-          return (
-            <mesh
-              key={`window-${index}-${wi}`}
-              position={[edge.mid.x + Math.cos(edge.angle) * offset, extrudeSettings.depth * 0.55, -edge.mid.y - Math.sin(edge.angle) * offset]}
-              rotation={[0, -edge.angle, 0]}
-              castShadow={false}
-              receiveShadow={false}
-            >
-              <boxGeometry args={[windowWidth, windowHeight, 0.04]} />
-              <meshStandardMaterial color="#7cb5f7" roughness={0.3} metalness={0.6} transparent opacity={0.88} />
-            </mesh>
-          );
-        });
+        return Array.from({ length: floorCount }).flatMap((_, floorIndex) =>
+          Array.from({ length: windowCount }).map((__, wi) => {
+            const offset = (wi - (windowCount - 1) / 2) * (windowWidth + 0.18);
+            return (
+              <mesh
+                key={`window-${index}-${floorIndex}-${wi}`}
+                position={[
+                  edge.mid.x + Math.cos(edge.angle) * offset,
+                  floorHeight * (floorIndex + 0.52),
+                  -edge.mid.y - Math.sin(edge.angle) * offset,
+                ]}
+                rotation={[0, -edge.angle, 0]}
+                castShadow={false}
+                receiveShadow={false}
+              >
+                <boxGeometry args={[windowWidth, windowHeight, 0.06]} />
+                <meshStandardMaterial color={floorIndex % 2 ? "#9ed7ef" : "#72b7d8"} roughness={0.25} metalness={0.45} transparent opacity={0.9} />
+              </mesh>
+            );
+          })
+        );
       })}
       {entranceIndex >= 0 && (() => {
         const entrance = edges[entranceIndex];
@@ -713,8 +722,8 @@ function Vegetation({
   }
 
   const terrainGeometry = useMemo(() => {
-    const width = Math.max(5000, Math.abs(center[1].lng - center[0].lng) * scale * Math.cos((refLat * Math.PI) / 180));
-    const height = Math.max(5000, Math.abs(center[1].lat - center[0].lat) * scale);
+    const width = Math.max(350, Math.abs(center[1].lng - center[0].lng) * scale * Math.cos((refLat * Math.PI) / 180));
+    const height = Math.max(350, Math.abs(center[1].lat - center[0].lat) * scale);
     const geometry = new THREE.PlaneGeometry(width, height, 16, 16);
     const position = geometry.attributes.position as THREE.BufferAttribute;
     for (let index = 0; index < position.count; index += 1) {
@@ -731,8 +740,8 @@ function Vegetation({
   }, [center, refLat, refLng, samples, terrainExaggeration]);
 
   const terrainBlock = useMemo(() => {
-    const width = Math.max(5000, Math.abs(center[1].lng - center[0].lng) * scale * Math.cos((refLat * Math.PI) / 180));
-    const depth = Math.max(5000, Math.abs(center[1].lat - center[0].lat) * scale);
+    const width = Math.max(350, Math.abs(center[1].lng - center[0].lng) * scale * Math.cos((refLat * Math.PI) / 180));
+    const depth = Math.max(350, Math.abs(center[1].lat - center[0].lat) * scale);
     const minimumElevation = samples.length ? Math.min(...samples.map((sample) => sample.elevation)) : 0;
     const maximumElevation = samples.length ? Math.max(...samples.map((sample) => sample.elevation)) : 0;
     const height = Math.max(baseThickness, (maximumElevation - minimumElevation) * terrainExaggeration + baseThickness);
@@ -812,10 +821,10 @@ function Vegetation({
     <group userData={{ exportToGLB: true }}>
       {showTerrain && <mesh position={[0, terrainBlock.y, 0]} receiveShadow userData={{ exportToGLB: true }}>
         <boxGeometry args={[terrainBlock.width, terrainBlock.height, terrainBlock.depth]} />
-        <meshStandardMaterial color="#78816f" roughness={1} metalness={0} />
+        <meshStandardMaterial color="#6f7c73" roughness={0.96} metalness={0} />
       </mesh>}
       {showTerrain && <mesh rotation={[-Math.PI / 2, 0, 0]} receiveShadow position={[0, -0.12, 0]} onPointerDown={handlePlaceMarker} geometry={terrainGeometry} userData={{ exportToGLB: true }}>
-        <meshStandardMaterial map={imagery} color={imagery ? "#ffffff" : "#6f825b"} roughness={0.92} metalness={0.04} />
+        <meshStandardMaterial map={imagery} color={imagery ? "#ffffff" : "#7f9875"} roughness={0.9} metalness={0.02} />
       </mesh>}
 
       {advanceMode && (
@@ -1134,9 +1143,9 @@ export function Space({
         <OrbitControls makeDefault enableDamping dampingFactor={0.08} />
         <CameraFocus point={focusPoint} />
         <CameraSurfaceGuard samples={samples} center={center} />
-        <color attach="background" args={["#dfe5e8"]} />
-        <ambientLight intensity={0.7} />
-        <directionalLight position={[-180, 260, 140]} intensity={3.1} castShadow shadow-mapSize={[4096, 4096]} shadow-camera-far={5000} shadow-camera-left={-2500} shadow-camera-right={2500} shadow-camera-top={2500} shadow-camera-bottom={-2500} shadow-bias={-0.0001} shadow-normalBias={0.02} />
+        <color attach="background" args={["#aebdca"]} />
+        <ambientLight intensity={0.9} />
+        <directionalLight position={[-180, 320, 220]} intensity={3.6} castShadow shadow-mapSize={[4096, 4096]} shadow-camera-far={5000} shadow-camera-left={-2500} shadow-camera-right={2500} shadow-camera-top={2500} shadow-camera-bottom={-2500} shadow-bias={-0.0001} shadow-normalBias={0.02} />
         {settings.showBuildings && buildingsData.map((item, index) => (
             <Building
               key={index}
@@ -1338,7 +1347,7 @@ export function Space({
           <div>
             <div style={{ marginBottom: "8px", fontWeight: 600 }}>{selectedBuilding.tags.name || "Unnamed Building"}</div>
             <div style={{ marginBottom: "6px" }}>
-              <span style={{ fontWeight: 600 }}>Height:</span> {selectedBuilding.buildingHeight.toFixed(1)}m
+              <span style={{ fontWeight: 600 }}>Height:</span> {selectedBuilding.buildingHeight.toFixed(1)}m ({selectedBuilding.tags.height ? "OSM value" : "estimated from footprint/levels"})
             </div>
             <div style={{ marginBottom: "6px" }}>
               <span style={{ fontWeight: 600 }}>Width:</span> {selectedBuilding.footprintWidth.toFixed(1)}m

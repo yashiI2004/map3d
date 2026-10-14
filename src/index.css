@@ -279,7 +279,7 @@ body,
 
 .globe-explorer__generated-workspace {
   position: fixed;
-  z-index: 3;
+  z-index: 30001;
   inset: 0;
   overflow: hidden;
   background: #dfe5e8;
@@ -392,6 +392,26 @@ body,
   color: #dbeafe;
   background: transparent;
   border-color: rgba(148, 163, 184, 0.35);
+}
+
+.globe-explorer__generation-notice {
+  position: absolute;
+  z-index: 6;
+  top: 4.25rem;
+  right: 1rem;
+  max-width: min(28rem, calc(100% - 2rem));
+  padding: 0.65rem 0.8rem;
+  color: #082f49;
+  background: rgba(207, 250, 254, 0.95);
+  border: 1px solid #67e8f9;
+  border-radius: 0.4rem;
+  font-size: 0.78rem;
+}
+
+.globe-explorer__generation-notice--error {
+  color: #7f1d1d;
+  background: rgba(254, 226, 226, 0.96);
+  border-color: #fca5a5;
 }
 
 .globe-explorer__enter:disabled,

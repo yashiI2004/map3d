@@ -32,11 +32,15 @@ type GlobeExplorerProps = {
   onSelectionChange: (selection: GlobeSelection) => void;
   onGenerateArea: (area: GlobeAreaSelection) => Promise<GlobeGenerationResult>;
   onGenerationComplete: () => void;
+  onGenerationStart?: () => void;
+  onGenerationError?: (message: string) => void;
 };
 
 const GOOGLE_KEY = import.meta.env.VITE_GOOGLE_MAPS_API_KEY as string | undefined;
 const CESIUM_ION_TOKEN = import.meta.env.VITE_CESIUM_ION_ACCESS_TOKEN as string | undefined;
 const MAX_GENERATOR_AREA_SQUARE_METERS = 100_000_000;
+const SATELLITE_IMAGERY_URL =
+  "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer";
 
 function formatCoordinate(selection: GlobeSelection | null) {
   if (!selection) return "Click the globe to choose a terrain location";
@@ -48,10 +52,15 @@ function calculateArea(points: GeographicPoint[]) {
   const centerLat = points.reduce((sum, point) => sum + point.lat, 0) / points.length;
   const latScale = 111320;
   const lngScale = 111320 * Math.cos(Cesium.Math.toRadians(centerLat));
+  const originLat = points[0].lat;
+  const originLng = points[0].lng;
   return Math.abs(points.reduce((sum, point, index) => {
     const next = points[(index + 1) % points.length];
-    return sum + (point.lng * lngScale) * (next.lat * latScale) -
-      (next.lng * lngScale) * (point.lat * latScale);
+    const pointX = (point.lng - originLng) * lngScale;
+    const pointY = (point.lat - originLat) * latScale;
+    const nextX = (next.lng - originLng) * lngScale;
+    const nextY = (next.lat - originLat) * latScale;
+    return sum + pointX * nextY - nextX * pointY;
   }, 0) / 2);
 }
 
@@ -71,7 +80,13 @@ function centerFor(points: GeographicPoint[]): GeographicPoint {
   };
 }
 
-export function GlobeTransition({ onSelectionChange, onGenerateArea, onGenerationComplete }: GlobeExplorerProps) {
+export function GlobeTransition({
+  onSelectionChange,
+  onGenerateArea,
+  onGenerationComplete,
+  onGenerationStart,
+  onGenerationError,
+}: GlobeExplorerProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const viewerRef = useRef<Cesium.Viewer | null>(null);
   const handlerRef = useRef<Cesium.ScreenSpaceEventHandler | null>(null);
@@ -204,15 +219,23 @@ export function GlobeTransition({ onSelectionChange, onGenerateArea, onGeneratio
         ? { terrain: Cesium.Terrain.fromWorldTerrain() }
         : { terrainProvider: new Cesium.EllipsoidTerrainProvider() }),
     });
-    const satelliteLayer = viewer.imageryLayers.addImageryProvider(
-      new Cesium.UrlTemplateImageryProvider({
-        url: "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
-        maximumLevel: 19,
-        credit: "Esri, Maxar, Earthstar Geographics, and the GIS User Community",
-      })
-    );
-    satelliteLayer.alpha = 1;
-    satelliteLayer.show = true;
+    const satelliteProviderPromise = Cesium.ArcGisMapServerImageryProvider.fromUrl(SATELLITE_IMAGERY_URL, {
+      maximumLevel: 19,
+      credit: "Esri, Maxar, Earthstar Geographics, and the GIS User Community",
+    });
+    const satelliteLayer = Cesium.ImageryLayer.fromProviderAsync(satelliteProviderPromise);
+    viewer.imageryLayers.add(satelliteLayer);
+    satelliteProviderPromise.then((satelliteProvider) => {
+      satelliteProvider.errorEvent.addEventListener((error) => {
+        console.error("Satellite imagery request failed:", error);
+        setImageryStatus("error");
+        setMessage("Satellite imagery is unavailable; OpenStreetMap fallback imagery remains active.");
+      });
+    }).catch((error) => {
+      console.error("Satellite imagery provider failed to initialize:", error);
+      setImageryStatus("error");
+      setMessage("Satellite imagery is unavailable; OpenStreetMap fallback imagery remains active.");
+    });
     const labelsLayer = viewer.imageryLayers.addImageryProvider(
       new Cesium.UrlTemplateImageryProvider({
         url: "https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}",
@@ -439,6 +462,7 @@ export function GlobeTransition({ onSelectionChange, onGenerateArea, onGeneratio
     if (!areaSelection) return;
     setIsGenerating(true);
     setMessage("Fetching elevation and OpenStreetMap features...");
+    onGenerationStart?.();
     try {
       const result = await onGenerateArea(areaSelection);
       setGenerationResult(result);
@@ -447,7 +471,9 @@ export function GlobeTransition({ onSelectionChange, onGenerateArea, onGeneratio
       setMessage(`Generated ${result.featureCount} geographic features (${result.buildingCount} buildings).`);
     } catch (error) {
       console.error("TerraVision area generation failed:", error);
-      setMessage(error instanceof Error ? error.message : "3D generation failed. Try a smaller area.");
+      const errorMessage = error instanceof Error ? error.message : "3D generation failed. Try a smaller area.";
+      setMessage(errorMessage);
+      onGenerationError?.(errorMessage);
     } finally {
       setIsGenerating(false);
     }
@@ -510,13 +536,19 @@ export function GlobeTransition({ onSelectionChange, onGenerateArea, onGeneratio
             : `${Math.round(areaSelection.areaSquareMeters).toLocaleString()} m²`}</div>
           <div className="globe-explorer__data-status">
             Imagery: {imageryLabel}<br />
-            Elevation: {generationResult ? "loaded by existing terrain renderer" : "loaded by existing terrain renderer"}<br />
-            Buildings: {generationResult ? `${generationResult.buildingCount} returned by Overpass` : "not fetched"}
+            Elevation: live OpenTopoData when available; flat-ground fallback otherwise<br />
+            Buildings: {generationResult ? `${generationResult.buildingCount} returned from OpenStreetMap` : "not fetched"}
           </div>
           <button type="button" className="globe-explorer__generate" onClick={generateArea} disabled={isGenerating}>
             {isGenerating ? "Generating…" : "Generate 3D"}
           </button>
-          {generationResult && <small>The existing TerraVision terrain and building renderer is now available in the workspace below. No GLB export is required for this workflow.</small>}
+          {generationResult && (
+            <small>
+              {generationResult.buildingCount > 0
+                ? "The existing TerraVision terrain and building renderer is now available in the workspace below."
+                : "No mapped buildings were returned, so only the labelled flat-ground fallback is shown. Select a denser mapped area to generate building geometry."}
+            </small>
+          )}
         </aside>
       )}
       <div className="globe-explorer__hint">Drag to orbit · right-drag to pan/tilt · wheel to zoom</div>

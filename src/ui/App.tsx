@@ -74,6 +74,8 @@ function App() {
   const [showIntro, setShowIntro] = useState(true);
   const [showGlobeExplorer, setShowGlobeExplorer] = useState(false);
   const [showGeneratedTerrain, setShowGeneratedTerrain] = useState(false);
+  const [generationStatus, setGenerationStatus] = useState<"idle" | "loading" | "ready" | "error">("idle");
+  const [generationError, setGenerationError] = useState<string | null>(null);
   const [showLegacyTerrain, setShowLegacyTerrain] = useState(false);
   const [fitModelVersion, setFitModelVersion] = useState(0);
   const [editorSettings, setEditorSettings] = useState<SpaceEditorSettings>({
@@ -244,20 +246,112 @@ function App() {
 
     const { south, west, north, east } = selectedBounds;
     const query = `[out:json][timeout:40];(way["building"](${south},${west},${north},${east});relation["building"](${south},${west},${north},${east});way["highway"](${south},${west},${north},${east});way["leisure"~"park|garden|nature_reserve"](${south},${west},${north},${east});way["landuse"~"forest|wood|grass|orchard|recreation_ground"](${south},${west},${north},${east});way["natural"~"wood|water|tree_row"](${south},${west},${north},${east});way["waterway"](${south},${west},${north},${east});node["natural"="tree"](${south},${west},${north},${east}););out body geom;`;
+    const buildingsOnlyQuery = `[out:json][timeout:25];(way["building"](${south},${west},${north},${east});relation["building"](${south},${west},${north},${east}););out body geom;`;
     console.log("OVERPASS BOUNDING BOX", selectedBounds);
     console.log("OVERPASS QUERY", query);
+    const fetchOverpass = async (overpassQuery: string, timeoutMs: number) => {
+      const endpoints = [
+        "https://overpass-api.de/api/interpreter",
+        "https://overpass.kumi.systems/api/interpreter",
+      ];
+      let lastError: unknown;
+      for (const endpoint of endpoints) {
+        const requestController = new AbortController();
+        const abortRequest = () => requestController.abort();
+        const timeout = window.setTimeout(() => requestController.abort(), timeoutMs);
+        controller.signal.addEventListener("abort", abortRequest, { once: true });
+        try {
+          const response = await fetch(`${endpoint}?data=${encodeURIComponent(overpassQuery)}`, {
+            signal: requestController.signal,
+          });
+          if (response.ok || response.status !== 429 && response.status !== 504) return response;
+          lastError = new Error(`Overpass returned HTTP ${response.status}.`);
+        } catch (error) {
+          if (controller.signal.aborted) throw error;
+          lastError = error;
+        } finally {
+          window.clearTimeout(timeout);
+          controller.signal.removeEventListener("abort", abortRequest);
+        }
+      }
+      throw lastError instanceof Error ? lastError : new Error("Overpass endpoints were unavailable.");
+    };
+
+    const fetchOpenStreetMapMap = async () => {
+      const requestController = new AbortController();
+      const abortRequest = () => requestController.abort();
+      const timeout = window.setTimeout(() => requestController.abort(), 30_000);
+      controller.signal.addEventListener("abort", abortRequest, { once: true });
+      try {
+        const response = await fetch(
+          `https://api.openstreetmap.org/api/0.6/map?bbox=${west},${south},${east},${north}`,
+          { signal: requestController.signal },
+        );
+        if (!response.ok) {
+          throw new Error(`OpenStreetMap map data request failed (${response.status}).`);
+        }
+        const xml = new DOMParser().parseFromString(await response.text(), "application/xml");
+        if (xml.querySelector("parsererror")) throw new Error("OpenStreetMap returned invalid map data.");
+        const nodes = new Map<string, { lat: number; lon: number }>();
+        xml.querySelectorAll("node").forEach((node) => {
+          const id = node.getAttribute("id");
+          const lat = Number(node.getAttribute("lat"));
+          const lon = Number(node.getAttribute("lon"));
+          if (id && Number.isFinite(lat) && Number.isFinite(lon)) nodes.set(id, { lat, lon });
+        });
+        return Array.from(xml.querySelectorAll("way")).map((way) => {
+          const tags = Object.fromEntries(Array.from(way.querySelectorAll(":scope > tag")).map((tag) => [
+            tag.getAttribute("k") || "",
+            tag.getAttribute("v") || "",
+          ]));
+          const geometry = Array.from(way.querySelectorAll(":scope > nd"))
+            .map((nd) => nodes.get(nd.getAttribute("ref") || ""))
+            .filter((point): point is { lat: number; lon: number } => Boolean(point));
+          return { id: Number(way.getAttribute("id")), tags, geometry };
+        }).filter((element) => element.geometry.length >= 2);
+      } finally {
+        window.clearTimeout(timeout);
+        controller.signal.removeEventListener("abort", abortRequest);
+      }
+    };
     try {
-      const response = await fetch("https://overpass-api.de/api/interpreter", {
-        method: "POST",
-        body: query,
-        headers: { "Content-Type": "application/x-www-form-urlencoded" },
-        signal: controller.signal,
-      });
+      let response: Response;
+      let usedBuildingsOnlyFallback = false;
+      try {
+        response = await fetchOverpass(query, 45_000);
+      } catch (error) {
+        if (controller.signal.aborted) throw error;
+        console.warn("Overpass feature query failed; retrying with building-only data.", error);
+        try {
+          response = await fetchOverpass(buildingsOnlyQuery, 30_000);
+          usedBuildingsOnlyFallback = true;
+        } catch (fallbackError) {
+          console.warn("Overpass building query failed; falling back to the OpenStreetMap map API.", fallbackError);
+          const mapElements = await fetchOpenStreetMapMap();
+          response = new Response(JSON.stringify({ elements: mapElements }), {
+            headers: { "Content-Type": "application/json" },
+          });
+          usedBuildingsOnlyFallback = true;
+        }
+      }
+      const isJsonResponse = (candidate: Response) =>
+        (candidate.headers.get("content-type") || "").includes("json");
+      if ((!response.ok || !isJsonResponse(response)) && !usedBuildingsOnlyFallback) {
+        console.warn("Overpass feature response was unusable; retrying with building-only data.");
+        try {
+          response = await fetchOverpass(buildingsOnlyQuery, 30_000);
+        } catch (fallbackError) {
+          console.warn("Overpass building query failed; falling back to the OpenStreetMap map API.", fallbackError);
+          const mapElements = await fetchOpenStreetMapMap();
+          response = new Response(JSON.stringify({ elements: mapElements }), {
+            headers: { "Content-Type": "application/json" },
+          });
+        }
+      }
       if (!response.ok) {
         throw new Error(`Building and geographic data request failed (${response.status}). Try a smaller area or retry.`);
       }
-      const contentType = response.headers.get("content-type") || "";
-      if (!contentType.includes("json")) {
+      if (!isJsonResponse(response)) {
         throw new Error("Building and geographic data service returned a non-JSON response. Try again shortly.");
       }
       const data = await response.json();
@@ -335,13 +429,34 @@ function App() {
   };
 
   const generateGlobeArea = useCallback(async (area: GlobeAreaSelection): Promise<GlobeGenerationResult> => {
-    const result = await requestBuildings(area.bounds);
-    if (!result) throw new Error("No geographic data was returned for this area.");
-    return result;
+    setGenerationStatus("loading");
+    setGenerationError(null);
+    try {
+      const result = await requestBuildings(area.bounds);
+      if (!result) throw new Error("No geographic data was returned for this area.");
+      setGenerationStatus("ready");
+      return result;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Geographic data request failed.";
+      setGenerationStatus("error");
+      setGenerationError(message);
+      throw error;
+    }
   }, [requestBuildings]);
 
   const handleGlobeGenerationComplete = useCallback(() => {
     setShowGeneratedTerrain(true);
+  }, []);
+
+  const handleGlobeGenerationStart = useCallback(() => {
+    setGenerationStatus("loading");
+    setGenerationError(null);
+    setShowGeneratedTerrain(true);
+  }, []);
+
+  const handleGlobeGenerationError = useCallback((message: string) => {
+    setGenerationStatus("error");
+    setGenerationError(message);
   }, []);
 
   const handleClickNextStep = async () => {
@@ -425,6 +540,8 @@ function App() {
           onSelectionChange={handleGlobeSelection}
           onGenerateArea={generateGlobeArea}
           onGenerationComplete={handleGlobeGenerationComplete}
+          onGenerationStart={handleGlobeGenerationStart}
+          onGenerationError={handleGlobeGenerationError}
         />
       )}
       {showGlobeExplorer && showGeneratedTerrain && (
@@ -435,9 +552,26 @@ function App() {
               <span>3D editor</span>
             </div>
             <div className="globe-explorer__generated-actions">
-              <span className="globe-explorer__generation-status">Generation complete</span>
+              <span className="globe-explorer__generation-status">
+                {generationStatus === "loading" ? "Generating…" : generationStatus === "error" ? "Generation needs attention" : "Generation complete"}
+              </span>
               <button type="button" onClick={() => setShowGeneratedTerrain(false)}>Back to globe</button>
             </div>
+            {generationStatus === "loading" && (
+              <div className="globe-explorer__generation-notice" role="status">
+                Loading OpenStreetMap features and elevation. The editable workspace is available while data loads.
+              </div>
+            )}
+            {generationStatus === "error" && (
+              <div className="globe-explorer__generation-notice globe-explorer__generation-notice--error" role="alert">
+                {generationError || "Geographic data could not be loaded. No buildings are being invented."}
+              </div>
+            )}
+            {generationStatus === "ready" && debugData?.buildingCount === 0 && (
+              <div className="globe-explorer__generation-notice globe-explorer__generation-notice--error" role="status">
+                No mapped building footprints were returned for this selection. The visible surface is labelled flat-ground fallback, not invented geographic data.
+              </div>
+            )}
           </div>
           <div className="globe-explorer__editor-controls">
             <div className="globe-explorer__control-section">
