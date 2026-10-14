@@ -1,12 +1,13 @@
 import { css, keyframes } from "@emotion/react";
 import { Space } from "../three/Space";
 import { IntroScreen } from "../three/IntroScreen";
+import { GlobeSelection, GlobeTransition } from "../three/GlobeTransition";
 import { FullscreenModal } from "../components/FullscreenModal";
 import { Title } from "@/components/text/Title";
 import { Description } from "@/components/text/Description";
 import { Column } from "@/components/flex/Column";
 import { MapComponent } from "@/components/map/SelectMap";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { UploadImages } from "@/components/UploadImages";
 import { JobStatus } from "@/components/JobStatus";
 import {
@@ -71,6 +72,8 @@ function App() {
   const [detailedStatus, setDetailedStatus] = useState<any | null>(null);
   const [isUploadingImages, setIsUploadingImages] = useState(false);
   const [showIntro, setShowIntro] = useState(true);
+  const [showGlobeExplorer, setShowGlobeExplorer] = useState(false);
+  const [showLegacyTerrain, setShowLegacyTerrain] = useState(false);
   const [isTransitioningFromIntro, setIsTransitioningFromIntro] = useState(false);
   const [debugData, setDebugData] = useState<{
     bounds: SelectedBounds;
@@ -106,7 +109,29 @@ function App() {
     setIsTransitioningFromIntro(true);
     setTimeout(() => {
       setShowIntro(false);
+      setShowGlobeExplorer(true);
     }, 1000);
+  };
+
+  const handleGlobeSelection = useCallback(({ lat, lng }: GlobeSelection) => {
+    const delta = 0.01;
+    const selectedBounds = [
+      { lat: lat + delta, lng: lng + delta },
+      { lat: lat - delta, lng: lng - delta },
+    ];
+    setAreaData(selectedBounds);
+    setCenter(selectedBounds);
+    setIsNextButtonDisabled(false);
+    setBuildings([]);
+    appendAreas([]);
+    setFeatures([]);
+    setDebugData(null);
+    setHasFetchedBuildings(false);
+  }, [appendAreas, setCenter, setFeatures]);
+
+  const openLegacyTerrain = () => {
+    setShowGlobeExplorer(false);
+    setShowLegacyTerrain(true);
   };
 
   const exportFile = () => {
@@ -345,10 +370,16 @@ function App() {
 
   return (
     <div css={css({ height: "100%", width: "100%" })}>
-      <TopNav step={step} />
+      {showGlobeExplorer && (
+        <GlobeTransition
+          onSelectionChange={handleGlobeSelection}
+          onOpenLegacyTerrain={openLegacyTerrain}
+        />
+      )}
+      {showLegacyTerrain && <TopNav step={step} />}
       <JobStatus jobId={jobId} statusData={detailedStatus} />
 
-      <FullscreenModal isOpen={steps[step] == "front"}>
+      {showLegacyTerrain && <FullscreenModal isOpen={steps[step] == "front"}>
         <Column gap="1rem">
           <Column gap="0.5rem">
             <Title>Generate 3d map</Title>
@@ -388,9 +419,9 @@ function App() {
             </Column>
           </div>
         </Column>
-      </FullscreenModal>
+      </FullscreenModal>}
 
-      <FullscreenModal isOpen={steps[step] == "processing"}>
+      {showLegacyTerrain && <FullscreenModal isOpen={steps[step] == "processing"}>
         <Column gap="1rem">
           <Column gap="0.5rem">
             <Title>Processing</Title>
@@ -415,13 +446,13 @@ function App() {
             )}
           </Column>
         </Column>
-      </FullscreenModal>
+      </FullscreenModal>}
 
-      <PrevButton isShow={step != 0} onClick={handleClickPrevStep}>
+      {showLegacyTerrain && <PrevButton isShow={step != 0} onClick={handleClickPrevStep}>
         <ChevronLeft css={IconSize} /> Prev Step
-      </PrevButton>
+      </PrevButton>}
 
-      <NextButton
+      {showLegacyTerrain && <NextButton
         isShow={step != 2}
         disabled={isNextButtonDisabled || isFetchingBuildings}
         onClick={handleClickNextStep}
@@ -441,13 +472,13 @@ function App() {
             Next Step <ChevronRight css={IconSize} />
           </>
         )}
-      </NextButton>
+      </NextButton>}
 
-      <NextButton isShow={step == 2} onClick={handleClickExport}>
+      {showLegacyTerrain && <NextButton isShow={step == 2} onClick={handleClickExport}>
         Export GLB <Download css={IconSize} />
-      </NextButton>
+      </NextButton>}
 
-      <Modal isOpen={isWarnModal} onClose={() => setIsWarnModal(false)}>
+      {showLegacyTerrain && <Modal isOpen={isWarnModal} onClose={() => setIsWarnModal(false)}>
         <Column gap="0.5rem">
           <Title>The area is too big </Title>
           <Description>Do you want to proceed?</Description>
@@ -462,9 +493,9 @@ function App() {
             Next Step <ChevronRight css={IconSize} />
           </Button>
         </Column>
-      </Modal>
+      </Modal>}
 
-      <Modal isOpen={isExportModal} onClose={() => setIsExportModal(false)}>
+      {showLegacyTerrain && <Modal isOpen={isExportModal} onClose={() => setIsExportModal(false)}>
         <Column gap="0.5rem">
           <Title>Export</Title>
 
@@ -487,9 +518,9 @@ function App() {
             )} */}
           </Row>
         </Column>
-      </Modal>
+      </Modal>}
 
-      <Modal isOpen={isFleetModal} onClose={() => setIsFleetModal(false)}>
+      {showLegacyTerrain && <Modal isOpen={isFleetModal} onClose={() => setIsFleetModal(false)}>
         <Column gap="0.5rem">
           <Title>Select Fleet Space</Title>
           {spaceList.map((item, index) => (
@@ -498,9 +529,9 @@ function App() {
             </Button>
           ))}
         </Column>
-      </Modal>
+      </Modal>}
 
-      <Space step={step}></Space>
+      {showLegacyTerrain && <Space step={step}></Space>}
     </div>
   );
 }

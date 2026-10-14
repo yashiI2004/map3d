@@ -64,9 +64,9 @@ export function TopNav({ step }: { step: number }) {
           left: 0,
           width: "100%",
           height: TOP_PANEL_HEIGHT,
-          backgroundColor: "#ffffff50",
-          backdropFilter: "blur(12px)",
-          borderBottom: `1px solid ${BORDER_COLOR}`,
+          backgroundColor: "#111416e8",
+          backdropFilter: "blur(16px)",
+          borderBottom: "1px solid #2b3034",
           zIndex: 9999,
           justifyContent: "space-between",
           alignItems: "center",
@@ -74,7 +74,7 @@ export function TopNav({ step }: { step: number }) {
       >
         <div
           css={css({
-            paddingLeft: "2rem",
+            paddingLeft: "1.25rem",
             alignItems: "center",
             flexDirection: "row",
             display: "flex",
@@ -85,7 +85,8 @@ export function TopNav({ step }: { step: number }) {
             css={css({
               fontSize: "14px",
               fontWeight: "600",
-              color: "#5b5d63",
+              color: "#f1f5f9",
+              letterSpacing: "0.02em",
             })}
           >
             🗺️ Terrain
@@ -103,10 +104,10 @@ export function TopNav({ step }: { step: number }) {
 
         <div
           css={css({
-            paddingRight: "2rem",
+            paddingRight: "1.25rem",
             display: "flex",
             flexDirection: "row",
-            gap: "0.5rem",
+            gap: "0.45rem",
           })}
         >
           <NavButton isShow={step >= 1} onClick={() => setOpenModal(true)}>

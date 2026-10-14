@@ -11,7 +11,16 @@ import {
 import L, { LatLng, LatLngBounds } from "leaflet";
 import "leaflet/dist/leaflet.css";
 import { css } from "@emotion/react";
-import { CircleMinus, MousePointerClick } from "lucide-react";
+import {
+  CircleMinus,
+  Layers3,
+  MapPin,
+  MousePointerClick,
+  Route,
+  Ruler,
+  Satellite,
+  Sun,
+} from "lucide-react";
 
 const IconSize = css({
   width: "14px",
@@ -89,7 +98,7 @@ function LocationSearch() {
         top: "1rem",
         left: "1rem",
         zIndex: 9999,
-        width: "min(24rem, calc(100% - 2rem))",
+        width: "min(25rem, calc(100% - 2rem))",
       })}
     >
       <form
@@ -97,11 +106,12 @@ function LocationSearch() {
         css={css({
           display: "flex",
           gap: "0.5rem",
-          backgroundColor: "rgba(255,255,255,0.94)",
-          backdropFilter: "blur(8px)",
-          borderRadius: "10px",
-          padding: "0.55rem",
-          boxShadow: "0 6px 18px rgba(0,0,0,0.15)",
+          backgroundColor: "rgba(18,22,25,0.92)",
+          backdropFilter: "blur(14px)",
+          border: "1px solid rgba(255,255,255,0.14)",
+          borderRadius: "8px",
+          padding: "0.45rem",
+          boxShadow: "0 10px 28px rgba(0,0,0,0.35)",
         })}
       >
         <input
@@ -112,6 +122,7 @@ function LocationSearch() {
             flex: 1,
             border: "none",
             outline: "none",
+            color: "#f8fafc",
             fontSize: "13px",
             background: "transparent",
           })}
@@ -120,9 +131,9 @@ function LocationSearch() {
           type="submit"
           css={css({
             border: "none",
-            backgroundColor: "#2563eb",
-            color: "#ffffff",
-            borderRadius: "8px",
+            backgroundColor: "#e7edf2",
+            color: "#11161a",
+            borderRadius: "6px",
             padding: "0.45rem 0.8rem",
             cursor: "pointer",
             fontSize: "12px",
@@ -136,11 +147,11 @@ function LocationSearch() {
         <div
           css={css({
             marginTop: "0.45rem",
-            backgroundColor: "rgba(255,255,255,0.94)",
+            backgroundColor: "rgba(18,22,25,0.94)",
             borderRadius: "8px",
             padding: "0.55rem 0.7rem",
             fontSize: "12px",
-            color: "#374151",
+            color: "#dbe4ec",
             boxShadow: "0 4px 12px rgba(0,0,0,0.1)",
           })}
         >
@@ -151,7 +162,7 @@ function LocationSearch() {
         <div
           css={css({
             marginTop: "0.45rem",
-            backgroundColor: "rgba(255,255,255,0.96)",
+            backgroundColor: "rgba(18,22,25,0.97)",
             borderRadius: "10px",
             padding: "0.4rem",
             boxShadow: "0 4px 12px rgba(0,0,0,0.12)",
@@ -172,10 +183,10 @@ function LocationSearch() {
                 padding: "0.45rem 0.55rem",
                 borderRadius: "8px",
                 cursor: "pointer",
-                color: "#111827",
+                color: "#f1f5f9",
                 fontSize: "12px",
                 ":hover": {
-                  backgroundColor: "#f3f4f6",
+                  backgroundColor: "#2b3339",
                 },
               })}
             >
@@ -343,14 +354,82 @@ export function MapComponent({
     <div
       css={css({
         position: "relative",
+        height: "calc(100vh - 7rem)",
+        minHeight: "480px",
+        borderRadius: "12px",
+        overflow: "hidden",
+        backgroundColor: "#050607",
+        border: "1px solid #242a2f",
+        boxShadow: "0 20px 60px rgba(0,0,0,0.35)",
       })}
     >
+      <div
+        aria-label="Map tools"
+        css={css({
+          position: "absolute",
+          zIndex: 10000,
+          top: 0,
+          left: 0,
+          right: 0,
+          height: "3rem",
+          display: "flex",
+          alignItems: "center",
+          gap: "0.2rem",
+          padding: "0 0.75rem",
+          backgroundColor: "#15191ce8",
+          borderBottom: "1px solid rgba(255,255,255,0.12)",
+          backdropFilter: "blur(12px)",
+        })}
+      >
+        <span
+          css={css({
+            color: "#f8fafc",
+            fontSize: "12px",
+            fontWeight: 700,
+            marginRight: "0.6rem",
+            letterSpacing: "0.08em",
+            textTransform: "uppercase",
+          })}
+        >
+          Map workspace
+        </span>
+        {[
+          { label: "Lighting", icon: Sun },
+          { label: "Location", icon: MapPin },
+          { label: "Routes", icon: Route },
+          { label: "Layers", icon: Layers3 },
+          { label: "Measure", icon: Ruler },
+          { label: "Satellite", icon: Satellite },
+        ].map(({ label, icon: Icon }) => (
+          <button
+            key={label}
+            type="button"
+            aria-label={label}
+            title={label}
+            css={css({
+              width: "2.25rem",
+              height: "2.25rem",
+              display: "grid",
+              placeItems: "center",
+              border: "none",
+              borderRadius: "6px",
+              color: "#aeb8c1",
+              background: "transparent",
+              cursor: "pointer",
+              transition: "background 0.2s, color 0.2s",
+              ":hover": { color: "#ffffff", background: "#2d353b" },
+            })}
+          >
+            <Icon size={16} strokeWidth={1.8} />
+          </button>
+        ))}
+      </div>
       <div
         css={css({
           position: "absolute",
           zIndex: 9999,
           right: "1rem",
-          top: "1rem",
+          top: "4rem",
           display: "flex",
           flexDirection: "column",
           justifyContent: "flex-end",
@@ -361,7 +440,7 @@ export function MapComponent({
           css={css({
             display: bounds == null || isDrag == true ? "none" : "flex",
             color: "#ffffff",
-            backgroundColor: "#ef4444",
+            backgroundColor: "#b93838",
             backdropFilter: "blur(8px)",
             border: "none",
             padding: "0.5rem 1rem",
@@ -382,8 +461,8 @@ export function MapComponent({
 
         <button
           css={css({
-            color: isDrag ? "#ffffff" : "#000000",
-            backgroundColor: isDrag ? "#007bffe8" : "#ffffff96",
+            color: isDrag ? "#11161a" : "#e7edf2",
+            backgroundColor: isDrag ? "#e7edf2" : "#182025e8",
             backdropFilter: "blur(8px)",
             border: "none",
             padding: "0.5rem 1rem",
@@ -397,7 +476,7 @@ export function MapComponent({
             alignItems: "center",
             gap: "0.5rem",
             ":hover": {
-              backgroundColor: isDrag ? "#085fbd" : "#ebeef0c2",
+              backgroundColor: isDrag ? "#ffffff" : "#2d353b",
             },
           })}
           onClick={handleClickSwitchDrag}
@@ -414,14 +493,15 @@ export function MapComponent({
         worldCopyJump
         zoomControl
         style={{
-          height: "70vh",
+          height: "100%",
           width: "100%",
-          minHeight: "420px",
+          minHeight: "480px",
         }}
       >
         <LocationSearch />
         <TileLayer
           attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+          className="terrain-map-tiles"
           url="https://tile.openstreetmap.org/{z}/{x}/{y}.png"
           maxZoom={20}
         />

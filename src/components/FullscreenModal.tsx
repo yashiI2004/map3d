@@ -15,17 +15,17 @@ export function FullscreenModal({
         height: "100%",
         position: "fixed",
         zIndex: 999,
-        backgroundColor: "#ffffffc9",
-        backdropFilter: "blur(12px)",
+        backgroundColor: "#080a0c",
+        color: "#f4f7fb",
         display: isOpen ? "flex" : "none",
       })}
     >
       <div
         css={css({
-          padding: "2rem",
-          paddingTop: "4rem",
+          padding: "4.25rem 2.5rem 2rem",
           width: "100%",
-          maxHeight: "100%",
+          height: "100%",
+          boxSizing: "border-box",
           overflowY: "auto",
         })}
       >

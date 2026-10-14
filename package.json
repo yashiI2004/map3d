@@ -15,6 +15,7 @@
     "@react-three/fiber": "^9.0.4",
     "@types/three": "^0.173.0",
     "axios": "^1.7.9",
+    "cesium": "^1.146.0",
     "deventds2": "^0.1.10",
     "leaflet": "^1.9.4",
     "lucide-react": "^0.475.0",
@@ -22,6 +23,7 @@
     "react-dom": "^19.0.0",
     "react-leaflet": "^5.0.0",
     "three": "^0.173.0",
+    "vite-plugin-cesium": "^1.2.23",
     "zustand": "^5.0.3"
   },
   "devDependencies": {
