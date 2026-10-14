@@ -60,20 +60,13 @@ export function GlobeTransition({ onSelectionChange, onOpenLegacyTerrain }: Glob
         : { terrainProvider: new Cesium.EllipsoidTerrainProvider() }),
     });
     const satelliteLayer = viewer.imageryLayers.addImageryProvider(
-      new Cesium.WebMapServiceImageryProvider({
-        url: import.meta.env.DEV ? "/api/imagery" : "https://tiles.maps.eox.at/wms",
-        layers: "s2cloudless-2019",
-        parameters: {
-          service: "WMS",
-          version: "1.1.1",
-          request: "GetMap",
-          styles: "",
-          format: "image/jpeg",
-          transparent: false,
-        },
+      new Cesium.UrlTemplateImageryProvider({
+        url: "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
+        maximumLevel: 19,
+        credit: "Esri, Maxar, Earthstar Geographics, and the GIS User Community",
       })
     );
-    satelliteLayer.alpha = 0.92;
+    satelliteLayer.alpha = 1;
     satelliteLayer.show = true;
     const labelsLayer = viewer.imageryLayers.addImageryProvider(
       new Cesium.UrlTemplateImageryProvider({
@@ -86,6 +79,8 @@ export function GlobeTransition({ onSelectionChange, onOpenLegacyTerrain }: Glob
     labelsLayer.brightness = 1.2;
 
     viewer.scene.globe.enableLighting = true;
+    viewer.scene.globe.maximumScreenSpaceError = 1.5;
+    viewer.scene.globe.tileCacheSize = 1000;
     viewer.scene.skyAtmosphere.show = true;
     viewer.scene.requestRenderMode = false;
     viewer.scene.screenSpaceCameraController.minimumZoomDistance = 2;
@@ -220,7 +215,7 @@ export function GlobeTransition({ onSelectionChange, onOpenLegacyTerrain }: Glob
       ? "Loading imagery"
       : imageryStatus === "error"
         ? "Fallback imagery"
-        : "Cesium fallback";
+        : "Satellite fallback";
 
   return (
     <div className="globe-explorer">
