@@ -1,7 +1,7 @@
 import { css, keyframes } from "@emotion/react";
 import { Space } from "../three/Space";
 import { IntroScreen } from "../three/IntroScreen";
-import { GlobeSelection, GlobeTransition } from "../three/GlobeTransition";
+import { GlobeAreaSelection, GlobeGenerationResult, GlobeSelection, GlobeTransition } from "../three/GlobeTransition";
 import { FullscreenModal } from "../components/FullscreenModal";
 import { Title } from "@/components/text/Title";
 import { Description } from "@/components/text/Description";
@@ -73,6 +73,7 @@ function App() {
   const [isUploadingImages, setIsUploadingImages] = useState(false);
   const [showIntro, setShowIntro] = useState(true);
   const [showGlobeExplorer, setShowGlobeExplorer] = useState(false);
+  const [showGeneratedTerrain, setShowGeneratedTerrain] = useState(false);
   const [showLegacyTerrain, setShowLegacyTerrain] = useState(false);
   const [isTransitioningFromIntro, setIsTransitioningFromIntro] = useState(false);
   const [debugData, setDebugData] = useState<{
@@ -207,8 +208,22 @@ function App() {
     setHasFetchedBuildings(false);
   };
 
-  const requestBuildings = async () => {
-    const selectedBounds = toSelectedBounds(areaData);
+  const requestBuildings = async (boundsOverride?: SelectedBounds): Promise<GlobeGenerationResult | null> => {
+    const selectedBounds = boundsOverride || toSelectedBounds(areaData);
+    const latitudeKm = Math.abs(selectedBounds.north - selectedBounds.south) * 111.32;
+    const longitudeKm = Math.abs(selectedBounds.east - selectedBounds.west) * 111.32 *
+      Math.cos(((selectedBounds.north + selectedBounds.south) / 2) * Math.PI / 180);
+    if (latitudeKm * longitudeKm > 100) {
+      throw new Error("Selected area is too large for the existing TerraVision generator. Select an area under 100 km².");
+    }
+    if (boundsOverride) {
+      const normalizedArea = [
+        { lat: selectedBounds.north, lng: selectedBounds.east },
+        { lat: selectedBounds.south, lng: selectedBounds.west },
+      ];
+      setAreaData(normalizedArea);
+      setCenter(normalizedArea);
+    }
     const requestId = requestRef.current.id + 1;
     requestRef.current.controller?.abort();
     const controller = new AbortController();
@@ -226,6 +241,13 @@ function App() {
         headers: { "Content-Type": "application/x-www-form-urlencoded" },
         signal: controller.signal,
       });
+      if (!response.ok) {
+        throw new Error(`Building and geographic data request failed (${response.status}). Try a smaller area or retry.`);
+      }
+      const contentType = response.headers.get("content-type") || "";
+      if (!contentType.includes("json")) {
+        throw new Error("Building and geographic data service returned a non-JSON response. Try again shortly.");
+      }
       const data = await response.json();
       if (requestRef.current.id !== requestId) return;
       const isInsideBounds = (point) =>
@@ -286,13 +308,29 @@ function App() {
       setFeatures(features);
       appendAreas(blds);
       setHasFetchedBuildings(true);
+      return {
+        features,
+        buildingCount: blds.length,
+        featureCount: features.length,
+      };
     } catch (error) {
-      if (error instanceof DOMException && error.name === "AbortError") return;
+      if (error instanceof DOMException && error.name === "AbortError") return null;
       console.error("Error fetching building data:", error);
+      return null;
     } finally {
       if (requestRef.current.id === requestId) setIsFetchingBuildings(false);
     }
   };
+
+  const generateGlobeArea = useCallback(async (area: GlobeAreaSelection): Promise<GlobeGenerationResult> => {
+    const result = await requestBuildings(area.bounds);
+    if (!result) throw new Error("No geographic data was returned for this area.");
+    return result;
+  }, [requestBuildings]);
+
+  const handleGlobeGenerationComplete = useCallback(() => {
+    setShowGeneratedTerrain(true);
+  }, []);
 
   const handleClickNextStep = async () => {
     if (step == 0) {
@@ -373,8 +411,18 @@ function App() {
       {showGlobeExplorer && (
         <GlobeTransition
           onSelectionChange={handleGlobeSelection}
-          onOpenLegacyTerrain={openLegacyTerrain}
+          onGenerateArea={generateGlobeArea}
+          onGenerationComplete={handleGlobeGenerationComplete}
         />
+      )}
+      {showGlobeExplorer && showGeneratedTerrain && (
+        <div className="globe-explorer__generated-workspace">
+          <div className="globe-explorer__generated-header">
+            <strong>TerraVision generated terrain</strong>
+            <button type="button" onClick={() => setShowGeneratedTerrain(false)}>Hide result</button>
+          </div>
+          <Space step={2} />
+        </div>
       )}
       {showLegacyTerrain && <TopNav step={step} />}
       <JobStatus jobId={jobId} statusData={detailedStatus} />

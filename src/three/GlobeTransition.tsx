@@ -7,9 +7,31 @@ export type GlobeSelection = {
   lng: number;
 };
 
+export type GeographicPoint = GlobeSelection;
+
+export type GlobeAreaSelection = {
+  type: "rectangle" | "polygon";
+  points: GeographicPoint[];
+  bounds: { north: number; east: number; south: number; west: number };
+  center: GeographicPoint;
+  areaSquareMeters: number;
+};
+
+export type GlobeGenerationResult = {
+  features: Array<{
+    id: number;
+    featureType: string;
+    tags?: Record<string, string | undefined>;
+    geometry?: GeographicPoint[];
+  }>;
+  buildingCount: number;
+  featureCount: number;
+};
+
 type GlobeExplorerProps = {
   onSelectionChange: (selection: GlobeSelection) => void;
-  onOpenLegacyTerrain: () => void;
+  onGenerateArea: (area: GlobeAreaSelection) => Promise<GlobeGenerationResult>;
+  onGenerationComplete: () => void;
 };
 
 const GOOGLE_KEY = import.meta.env.VITE_GOOGLE_MAPS_API_KEY as string | undefined;
@@ -20,7 +42,35 @@ function formatCoordinate(selection: GlobeSelection | null) {
   return `${selection.lat.toFixed(5)}, ${selection.lng.toFixed(5)}`;
 }
 
-export function GlobeTransition({ onSelectionChange, onOpenLegacyTerrain }: GlobeExplorerProps) {
+function calculateArea(points: GeographicPoint[]) {
+  if (points.length < 3) return 0;
+  const centerLat = points.reduce((sum, point) => sum + point.lat, 0) / points.length;
+  const latScale = 111320;
+  const lngScale = 111320 * Math.cos(Cesium.Math.toRadians(centerLat));
+  return Math.abs(points.reduce((sum, point, index) => {
+    const next = points[(index + 1) % points.length];
+    return sum + (point.lng * lngScale) * (next.lat * latScale) -
+      (next.lng * lngScale) * (point.lat * latScale);
+  }, 0) / 2);
+}
+
+function boundsFor(points: GeographicPoint[]) {
+  return {
+    north: Math.max(...points.map((point) => point.lat)),
+    east: Math.max(...points.map((point) => point.lng)),
+    south: Math.min(...points.map((point) => point.lat)),
+    west: Math.min(...points.map((point) => point.lng)),
+  };
+}
+
+function centerFor(points: GeographicPoint[]): GeographicPoint {
+  return {
+    lat: points.reduce((sum, point) => sum + point.lat, 0) / points.length,
+    lng: points.reduce((sum, point) => sum + point.lng, 0) / points.length,
+  };
+}
+
+export function GlobeTransition({ onSelectionChange, onGenerateArea, onGenerationComplete }: GlobeExplorerProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const viewerRef = useRef<Cesium.Viewer | null>(null);
   const handlerRef = useRef<Cesium.ScreenSpaceEventHandler | null>(null);
@@ -32,7 +82,95 @@ export function GlobeTransition({ onSelectionChange, onOpenLegacyTerrain }: Glob
     GOOGLE_KEY ? "loading" : "fallback"
   );
   const [detailsOpen, setDetailsOpen] = useState(false);
+  const [selectionMode, setSelectionMode] = useState<"none" | "rectangle" | "polygon">("none");
+  const [areaSelection, setAreaSelection] = useState<GlobeAreaSelection | null>(null);
+  const [draftPoints, setDraftPoints] = useState<GeographicPoint[]>([]);
+  const [isGenerating, setIsGenerating] = useState(false);
+  const [generationResult, setGenerationResult] = useState<GlobeGenerationResult | null>(null);
   const selectionEntityRef = useRef<Cesium.Entity | null>(null);
+  const areaEntitiesRef = useRef<Cesium.Entity[]>([]);
+  const generatedEntitiesRef = useRef<Cesium.Entity[]>([]);
+  const dragStartRef = useRef<GeographicPoint | null>(null);
+  const drawingRef = useRef(false);
+  const selectionModeRef = useRef<"none" | "rectangle" | "polygon">("none");
+  const polygonPointsRef = useRef<GeographicPoint[]>([]);
+
+  const pickPoint = (position: Cesium.Cartesian2) => {
+    const viewer = viewerRef.current;
+    if (!viewer) return null;
+    const ray = viewer.camera.getPickRay(position);
+    const fallback = viewer.camera.pickEllipsoid(position, viewer.scene.globe.ellipsoid) ||
+      (ray ? viewer.scene.globe.pick(ray, viewer.scene) : null);
+    if (!fallback) return null;
+    const cartographic = Cesium.Cartographic.fromCartesian(fallback);
+    return {
+      lat: Cesium.Math.toDegrees(cartographic.latitude),
+      lng: Cesium.Math.toDegrees(cartographic.longitude),
+    };
+  };
+
+  const clearAreaEntities = () => {
+    const viewer = viewerRef.current;
+    if (!viewer) return;
+    areaEntitiesRef.current.forEach((entity) => viewer.entities.remove(entity));
+    areaEntitiesRef.current = [];
+  };
+
+  const renderArea = (points: GeographicPoint[]) => {
+    const viewer = viewerRef.current;
+    if (!viewer || points.length < 2) return;
+    clearAreaEntities();
+    const positions = points.map((point) => Cesium.Cartesian3.fromDegrees(point.lng, point.lat));
+    const boundary = viewer.entities.add({
+      polyline: {
+        positions: [...positions, positions[0]],
+        width: 3,
+        material: Cesium.Color.CYAN,
+        clampToGround: true,
+      },
+    });
+    areaEntitiesRef.current.push(boundary);
+    if (points.length >= 3) {
+      const fill = viewer.entities.add({
+        polygon: {
+          hierarchy: positions,
+          material: Cesium.Color.CYAN.withAlpha(0.2),
+          height: 0,
+          heightReference: Cesium.HeightReference.CLAMP_TO_GROUND,
+        },
+      });
+      areaEntitiesRef.current.push(fill);
+    }
+  };
+
+  const finishArea = (type: "rectangle" | "polygon", points: GeographicPoint[]) => {
+    if ((type === "rectangle" && points.length !== 4) || (type === "polygon" && points.length < 3)) {
+      setMessage(type === "polygon" ? "Add at least three points to finish the polygon." : "Drag across the globe to define a rectangle.");
+      return;
+    }
+    const area: GlobeAreaSelection = {
+      type,
+      points,
+      bounds: boundsFor(points),
+      center: centerFor(points),
+      areaSquareMeters: calculateArea(points),
+    };
+
+    setAreaSelection(area);
+    setSelection(area.center);
+    setDraftPoints([]);
+    setSelectionMode("none");
+    drawingRef.current = false;
+    viewerRef.current?.scene.screenSpaceCameraController && (viewerRef.current.scene.screenSpaceCameraController.enableInputs = true);
+    renderArea(points);
+    onSelectionChange(area.center);
+    setDetailsOpen(true);
+    setMessage("Area selected. Review the bounds, then generate the 3D result.");
+  };
+
+  useEffect(() => {
+    selectionModeRef.current = selectionMode;
+  }, [selectionMode]);
 
   useEffect(() => {
     if (!containerRef.current) return;
@@ -119,6 +257,21 @@ export function GlobeTransition({ onSelectionChange, onOpenLegacyTerrain }: Glob
 
     const handler = new Cesium.ScreenSpaceEventHandler(viewer.scene.canvas);
     handler.setInputAction((movement: Cesium.ScreenSpaceEventHandler.PositionedEvent) => {
+      if (selectionModeRef.current !== "rectangle") return;
+      dragStartRef.current = pickPoint(movement.position);
+      drawingRef.current = Boolean(dragStartRef.current);
+    }, Cesium.ScreenSpaceEventType.LEFT_DOWN);
+    handler.setInputAction((movement: Cesium.ScreenSpaceEventHandler.PositionedEvent) => {
+      if (selectionModeRef.current === "polygon") {
+        const point = pickPoint(movement.position);
+        if (point) {
+          polygonPointsRef.current = [...polygonPointsRef.current, point];
+          setDraftPoints(polygonPointsRef.current);
+          renderArea(polygonPointsRef.current);
+        }
+        return;
+      }
+      if (selectionModeRef.current === "rectangle") return;
       const picked = viewer.scene.pick(movement.position);
       const cartesian = picked instanceof Cesium.Cesium3DTileFeature
         ? viewer.scene.pickPosition(movement.position)
@@ -151,6 +304,33 @@ export function GlobeTransition({ onSelectionChange, onOpenLegacyTerrain }: Glob
       });
       setMessage("Location selected. Continue exploring or keep navigating.");
     }, Cesium.ScreenSpaceEventType.LEFT_CLICK);
+    handler.setInputAction((movement: Cesium.ScreenSpaceEventHandler.MotionEvent) => {
+      if (selectionModeRef.current !== "rectangle" || !drawingRef.current) return;
+      const start = dragStartRef.current;
+      const end = pickPoint(movement.endPosition);
+      if (!start || !end) return;
+      const points = [
+        { lat: start.lat, lng: start.lng },
+        { lat: start.lat, lng: end.lng },
+        { lat: end.lat, lng: end.lng },
+        { lat: end.lat, lng: start.lng },
+      ];
+      setDraftPoints(points);
+      renderArea(points);
+    }, Cesium.ScreenSpaceEventType.MOUSE_MOVE);
+    handler.setInputAction((movement: Cesium.ScreenSpaceEventHandler.PositionedEvent) => {
+      if (selectionModeRef.current !== "rectangle" || !drawingRef.current) return;
+      const start = dragStartRef.current;
+      const end = pickPoint(movement.position);
+      drawingRef.current = false;
+      if (!start || !end) return;
+      finishArea("rectangle", [
+        { lat: start.lat, lng: start.lng },
+        { lat: start.lat, lng: end.lng },
+        { lat: end.lat, lng: end.lng },
+        { lat: end.lat, lng: start.lng },
+      ]);
+    }, Cesium.ScreenSpaceEventType.LEFT_UP);
     handlerRef.current = handler;
 
     return () => {
@@ -209,6 +389,63 @@ export function GlobeTransition({ onSelectionChange, onOpenLegacyTerrain }: Glob
     }
   };
 
+  const beginAreaSelection = (mode: "rectangle" | "polygon") => {
+    clearAreaEntities();
+    setAreaSelection(null);
+    setGenerationResult(null);
+    polygonPointsRef.current = [];
+    setDraftPoints([]);
+    selectionModeRef.current = mode;
+    setSelectionMode(mode);
+    drawingRef.current = false;
+    if (viewerRef.current) viewerRef.current.scene.screenSpaceCameraController.enableInputs = false;
+    setMessage(mode === "rectangle"
+      ? "Drag across the globe to select a rectangle."
+      : "Click boundary points, then choose Finish polygon.");
+  };
+
+  const cancelAreaSelection = () => {
+    polygonPointsRef.current = [];
+    dragStartRef.current = null;
+    drawingRef.current = false;
+    setDraftPoints([]);
+    selectionModeRef.current = "none";
+    setSelectionMode("none");
+    clearAreaEntities();
+    if (viewerRef.current) viewerRef.current.scene.screenSpaceCameraController.enableInputs = true;
+    setMessage("Area selection cancelled.");
+  };
+
+  const clearAreaSelection = () => {
+    cancelAreaSelection();
+    setAreaSelection(null);
+    generatedEntitiesRef.current.forEach((entity) => viewerRef.current?.entities.remove(entity));
+    generatedEntitiesRef.current = [];
+    setGenerationResult(null);
+  };
+
+  const finishPolygon = () => {
+    finishArea("polygon", polygonPointsRef.current);
+  };
+
+  const generateArea = async () => {
+    if (!areaSelection) return;
+    setIsGenerating(true);
+    setMessage("Fetching elevation and OpenStreetMap features...");
+    try {
+      const result = await onGenerateArea(areaSelection);
+      setGenerationResult(result);
+      onGenerationComplete();
+      setDetailsOpen(true);
+      setMessage(`Generated ${result.featureCount} geographic features (${result.buildingCount} buildings).`);
+    } catch (error) {
+      console.error("TerraVision area generation failed:", error);
+      setMessage(error instanceof Error ? error.message : "3D generation failed. Try a smaller area.");
+    } finally {
+      setIsGenerating(false);
+    }
+  };
+
   const imageryLabel = imageryStatus === "active"
     ? "Photorealistic 3D"
     : imageryStatus === "loading"
@@ -247,9 +484,32 @@ export function GlobeTransition({ onSelectionChange, onOpenLegacyTerrain }: Glob
             <strong>{formatCoordinate(selection)}</strong>
           </div>
           {!GOOGLE_KEY && <small>Set VITE_GOOGLE_MAPS_API_KEY in a local .env file for Google Photorealistic 3D Tiles. The Cesium globe remains usable without it.</small>}
-          <button type="button" className="globe-explorer__enter" onClick={onOpenLegacyTerrain}>
-            Open legacy TerraVision tools
+        </aside>
+      )}
+      <div className="globe-explorer__area-tools">
+        <button type="button" onClick={() => beginAreaSelection("rectangle")} disabled={isGenerating}>Select rectangle</button>
+        <button type="button" onClick={() => beginAreaSelection("polygon")} disabled={isGenerating}>Select polygon</button>
+        {selectionMode === "polygon" && <button type="button" onClick={finishPolygon}>Finish polygon</button>}
+        {selectionMode !== "none" && <button type="button" onClick={cancelAreaSelection}>Cancel</button>}
+        {areaSelection && <button type="button" onClick={clearAreaSelection}>Clear</button>}
+      </div>
+      {areaSelection && (
+        <aside className="globe-explorer__area-review">
+          <div className="globe-explorer__eyebrow">Selected {areaSelection.type}</div>
+          <div>Centre: {formatCoordinate(areaSelection.center)}</div>
+          <div>Bounds: S {areaSelection.bounds.south.toFixed(5)}, W {areaSelection.bounds.west.toFixed(5)}, N {areaSelection.bounds.north.toFixed(5)}, E {areaSelection.bounds.east.toFixed(5)}</div>
+          <div>Area: {areaSelection.areaSquareMeters >= 1_000_000
+            ? `${(areaSelection.areaSquareMeters / 1_000_000).toFixed(2)} km²`
+            : `${Math.round(areaSelection.areaSquareMeters).toLocaleString()} m²`}</div>
+          <div className="globe-explorer__data-status">
+            Imagery: {imageryLabel}<br />
+            Elevation: {generationResult ? "loaded by existing terrain renderer" : "loaded by existing terrain renderer"}<br />
+            Buildings: {generationResult ? `${generationResult.buildingCount} returned by Overpass` : "not fetched"}
+          </div>
+          <button type="button" className="globe-explorer__generate" onClick={generateArea} disabled={isGenerating}>
+            {isGenerating ? "Generating…" : "Generate 3D"}
           </button>
+          {generationResult && <small>The existing TerraVision terrain and building renderer is now available in the workspace below. No GLB export is required for this workflow.</small>}
         </aside>
       )}
       <div className="globe-explorer__hint">Drag to orbit · right-drag to pan/tilt · wheel to zoom</div>
