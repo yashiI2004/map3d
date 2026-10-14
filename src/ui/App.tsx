@@ -1,5 +1,5 @@
 import { css, keyframes } from "@emotion/react";
-import { Space } from "../three/Space";
+import { Space, SpaceEditorSettings } from "../three/Space";
 import { IntroScreen } from "../three/IntroScreen";
 import { GlobeAreaSelection, GlobeGenerationResult, GlobeSelection, GlobeTransition } from "../three/GlobeTransition";
 import { FullscreenModal } from "../components/FullscreenModal";
@@ -75,6 +75,18 @@ function App() {
   const [showGlobeExplorer, setShowGlobeExplorer] = useState(false);
   const [showGeneratedTerrain, setShowGeneratedTerrain] = useState(false);
   const [showLegacyTerrain, setShowLegacyTerrain] = useState(false);
+  const [fitModelVersion, setFitModelVersion] = useState(0);
+  const [editorSettings, setEditorSettings] = useState<SpaceEditorSettings>({
+    showTerrain: true,
+    showBuildings: true,
+    showRoads: true,
+    showWater: true,
+    showLandCover: true,
+    showTrees: true,
+    terrainExaggeration: 1,
+    buildingScale: 1,
+    baseThickness: 12,
+  });
   const [isTransitioningFromIntro, setIsTransitioningFromIntro] = useState(false);
   const [debugData, setDebugData] = useState<{
     bounds: SelectedBounds;
@@ -316,7 +328,7 @@ function App() {
     } catch (error) {
       if (error instanceof DOMException && error.name === "AbortError") return null;
       console.error("Error fetching building data:", error);
-      return null;
+      throw error instanceof Error ? error : new Error("Geographic data request failed.");
     } finally {
       if (requestRef.current.id === requestId) setIsFetchingBuildings(false);
     }
@@ -418,10 +430,33 @@ function App() {
       {showGlobeExplorer && showGeneratedTerrain && (
         <div className="globe-explorer__generated-workspace">
           <div className="globe-explorer__generated-header">
-            <strong>TerraVision generated terrain</strong>
+            <strong>TerraVision 3D editor</strong>
             <button type="button" onClick={() => setShowGeneratedTerrain(false)}>Hide result</button>
           </div>
-          <Space step={2} />
+          <div className="globe-explorer__editor-controls">
+            <label>Terrain <input type="checkbox" checked={editorSettings.showTerrain} onChange={(event) => setEditorSettings((s) => ({ ...s, showTerrain: event.target.checked }))} /></label>
+            <label>Buildings <input type="checkbox" checked={editorSettings.showBuildings} onChange={(event) => setEditorSettings((s) => ({ ...s, showBuildings: event.target.checked }))} /></label>
+            <label>Roads <input type="checkbox" checked={editorSettings.showRoads} onChange={(event) => setEditorSettings((s) => ({ ...s, showRoads: event.target.checked }))} /></label>
+            <label>Water <input type="checkbox" checked={editorSettings.showWater} onChange={(event) => setEditorSettings((s) => ({ ...s, showWater: event.target.checked }))} /></label>
+            <label>Land cover <input type="checkbox" checked={editorSettings.showLandCover} onChange={(event) => setEditorSettings((s) => ({ ...s, showLandCover: event.target.checked }))} /></label>
+            <label>Trees <input type="checkbox" checked={editorSettings.showTrees} onChange={(event) => setEditorSettings((s) => ({ ...s, showTrees: event.target.checked }))} /></label>
+            <label>Terrain exaggeration
+              <input type="range" min="0.5" max="4" step="0.1" value={editorSettings.terrainExaggeration} onChange={(event) => setEditorSettings((s) => ({ ...s, terrainExaggeration: Number(event.target.value) }))} />
+              {editorSettings.terrainExaggeration.toFixed(1)}x
+            </label>
+            <label>Building height
+              <input type="range" min="0.5" max="2.5" step="0.1" value={editorSettings.buildingScale} onChange={(event) => setEditorSettings((s) => ({ ...s, buildingScale: Number(event.target.value) }))} />
+              {editorSettings.buildingScale.toFixed(1)}x
+            </label>
+            <label>Base thickness
+              <input type="range" min="4" max="80" step="1" value={editorSettings.baseThickness} onChange={(event) => setEditorSettings((s) => ({ ...s, baseThickness: Number(event.target.value) }))} />
+              {editorSettings.baseThickness}m
+            </label>
+            <span>Shape: rectangular</span>
+            <button type="button" onClick={() => setFitModelVersion((version) => version + 1)}>Fit model</button>
+            <button type="button" onClick={() => setAction(true)}>Export GLB</button>
+          </div>
+          <Space step={2} editorSettings={editorSettings} fitVersion={fitModelVersion} />
         </div>
       )}
       {showLegacyTerrain && <TopNav step={step} />}

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { Canvas, extend, ReactThreeFiber, useFrame, useThree } from "@react-three/fiber";
 import { Soldier, useAreaStore } from "@/state/areaStore";
-import { Html, Sky, Environment, Line, Edges } from "@react-three/drei";
+import { Html, Sky, Environment, Line, Edges, OrbitControls } from "@react-three/drei";
 import * as THREE from "three";
 import { useActionStore } from "@/state/exportStore";
 import { GLTFExporter } from "three/examples/jsm/Addons.js";
@@ -13,6 +13,18 @@ const scale = 51000;
 
 type Point = { lat: number; lng: number };
 type ElevationSample = Point & { elevation: number };
+
+export type SpaceEditorSettings = {
+  showTerrain: boolean;
+  showBuildings: boolean;
+  showRoads: boolean;
+  showWater: boolean;
+  showLandCover: boolean;
+  showTrees: boolean;
+  terrainExaggeration: number;
+  buildingScale: number;
+  baseThickness: number;
+};
 
 function elevationAt(samples: ElevationSample[], point: Point) {
   if (!samples.length) return 0;
@@ -40,7 +52,7 @@ function elevationAt(samples: ElevationSample[], point: Point) {
   return THREE.MathUtils.lerp(top, bottom, rowWeight);
 }
 
-function CameraFrame({ center }: { center: any[] }) {
+function CameraFrame({ center, fitVersion = 0 }: { center: any[]; fitVersion?: number }) {
   const { camera } = useThree();
 
   useEffect(() => {
@@ -51,7 +63,7 @@ function CameraFrame({ center }: { center: any[] }) {
     camera.position.set(0, distance * 0.72, distance);
     camera.lookAt(0, 0, 0);
     camera.updateProjectionMatrix();
-  }, [camera, center]);
+  }, [camera, center, fitVersion]);
 
   return null;
 }
@@ -179,12 +191,14 @@ function Building({
   tags,
   baseHeight,
   onSelect,
+  heightScale = 1,
 }: {
   shape: THREE.Shape;
   extrudeSettings: any;
   tags: any;
   baseHeight: number;
   onSelect?: (data: any) => void;
+  heightScale?: number;
 }) {
   const [hovered, setHovered] = useState(false);
   const [clicked, setClicked] = useState(false);
@@ -208,7 +222,7 @@ function Building({
     ? parseFloat(tags.height)
     : extrudeSettings.depth;
   const defaultBuildingLevels = tags["building:levels"] || Math.round(extrudeSettings.depth / 2.2);
-  const buildingHeight = defaultBuildingHeight;
+  const buildingHeight = defaultBuildingHeight * heightScale;
   const buildingLevels = defaultBuildingLevels;
 
   const edges = shapePoints.map((point, index) => {
@@ -255,7 +269,7 @@ function Building({
         receiveShadow
         userData={{ exportToGLB: true }}
       >
-        <extrudeGeometry args={[shape, extrudeSettings]} />
+        <extrudeGeometry args={[shape, { ...extrudeSettings, depth: extrudeSettings.depth * heightScale }]} />
         <meshStandardMaterial
           color={hovered || clicked ? "#dce7ff" : buildingColor}
           roughness={0.9}
@@ -661,6 +675,9 @@ function Vegetation({
   placementMode,
   onTerrainClick,
   checkpointMode,
+  showTerrain,
+  terrainExaggeration,
+  baseThickness,
 }: {
   areas: any[];
   center: any[];
@@ -670,6 +687,9 @@ function Vegetation({
   placementMode: "normal" | "add" | "move";
   onTerrainClick: (point: { x: number; z: number; latitude: number; longitude: number; altitude: number }) => void;
   checkpointMode: boolean;
+  showTerrain: boolean;
+  terrainExaggeration: number;
+  baseThickness: number;
 }) {
   if (!center?.[0] || !center?.[1]) return null;
 
@@ -704,20 +724,20 @@ function Vegetation({
         lat: refLat + y / scale,
         lng: refLng + x / (scale * Math.cos((refLat * Math.PI) / 180)),
       };
-      position.setZ(index, elevationAt(samples, point));
+      position.setZ(index, elevationAt(samples, point) * terrainExaggeration);
     }
     geometry.computeVertexNormals();
     return geometry;
-  }, [center, refLat, refLng, samples]);
+  }, [center, refLat, refLng, samples, terrainExaggeration]);
 
   const terrainBlock = useMemo(() => {
     const width = Math.max(5000, Math.abs(center[1].lng - center[0].lng) * scale * Math.cos((refLat * Math.PI) / 180));
     const depth = Math.max(5000, Math.abs(center[1].lat - center[0].lat) * scale);
     const minimumElevation = samples.length ? Math.min(...samples.map((sample) => sample.elevation)) : 0;
     const maximumElevation = samples.length ? Math.max(...samples.map((sample) => sample.elevation)) : 0;
-    const height = Math.max(12, maximumElevation - minimumElevation + 12);
-    return { width, depth, height, y: minimumElevation - height / 2 };
-  }, [center, refLat, samples]);
+    const height = Math.max(baseThickness, (maximumElevation - minimumElevation) * terrainExaggeration + baseThickness);
+    return { width, depth, height, y: minimumElevation * terrainExaggeration - height / 2 };
+  }, [baseThickness, center, refLat, samples, terrainExaggeration]);
 
   const areaPolygons = useMemo(
     () =>
@@ -790,13 +810,13 @@ function Vegetation({
 
   return (
     <group userData={{ exportToGLB: true }}>
-      <mesh position={[0, terrainBlock.y, 0]} receiveShadow userData={{ exportToGLB: true }}>
+      {showTerrain && <mesh position={[0, terrainBlock.y, 0]} receiveShadow userData={{ exportToGLB: true }}>
         <boxGeometry args={[terrainBlock.width, terrainBlock.height, terrainBlock.depth]} />
         <meshStandardMaterial color="#78816f" roughness={1} metalness={0} />
-      </mesh>
-      <mesh rotation={[-Math.PI / 2, 0, 0]} receiveShadow position={[0, -0.12, 0]} onPointerDown={handlePlaceMarker} geometry={terrainGeometry} userData={{ exportToGLB: true }}>
+      </mesh>}
+      {showTerrain && <mesh rotation={[-Math.PI / 2, 0, 0]} receiveShadow position={[0, -0.12, 0]} onPointerDown={handlePlaceMarker} geometry={terrainGeometry} userData={{ exportToGLB: true }}>
         <meshStandardMaterial map={imagery} color={imagery ? "#ffffff" : "#6f825b"} roughness={0.92} metalness={0.04} />
-      </mesh>
+      </mesh>}
 
       {advanceMode && (
         <group>
@@ -951,7 +971,27 @@ export function Export() {
   return null;
 }
 
-export function Space({ step = 2 }: { step?: number }) {
+export function Space({
+  step = 2,
+  editorSettings,
+  fitVersion = 0,
+}: {
+  step?: number;
+  editorSettings?: Partial<SpaceEditorSettings>;
+  fitVersion?: number;
+}) {
+  const settings: SpaceEditorSettings = {
+    showTerrain: true,
+    showBuildings: true,
+    showRoads: true,
+    showWater: true,
+    showLandCover: true,
+    showTrees: true,
+    terrainExaggeration: 1,
+    buildingScale: 1,
+    baseThickness: 12,
+    ...editorSettings,
+  };
   const areas = useAreaStore((state) => state.areas);
   const features = useAreaStore((state) => state.features);
   const soldiers = useAreaStore((state) => state.soldiers);
@@ -1090,20 +1130,22 @@ export function Space({ step = 2 }: { step?: number }) {
         gl={{ antialias: true, powerPreference: "high-performance", outputColorSpace: THREE.SRGBColorSpace, toneMapping: THREE.ACESFilmicToneMapping, toneMappingExposure: 1.1 }}
         shadows={{ type: THREE.PCFSoftShadowMap }}
       >
-        <CameraFrame center={center} />
+        <CameraFrame center={center} fitVersion={fitVersion} />
+        <OrbitControls makeDefault enableDamping dampingFactor={0.08} />
         <CameraFocus point={focusPoint} />
         <CameraSurfaceGuard samples={samples} center={center} />
         <color attach="background" args={["#dfe5e8"]} />
         <ambientLight intensity={0.7} />
         <directionalLight position={[-180, 260, 140]} intensity={3.1} castShadow shadow-mapSize={[4096, 4096]} shadow-camera-far={5000} shadow-camera-left={-2500} shadow-camera-right={2500} shadow-camera-top={2500} shadow-camera-bottom={-2500} shadow-bias={-0.0001} shadow-normalBias={0.02} />
-        {buildingsData.map((item, index) => (
-          <Building
-            key={index}
+        {settings.showBuildings && buildingsData.map((item, index) => (
+            <Building
+              key={index}
             shape={item.shape}
             extrudeSettings={item.extrudeSettings}
             tags={item.tags}
             baseHeight={item.baseHeight}
             onSelect={handleBuildingSelect}
+            heightScale={settings.buildingScale}
           />
         ))}
 
@@ -1112,8 +1154,16 @@ export function Space({ step = 2 }: { step?: number }) {
         ))}
         {measurementMode && measurementSoldierIds.length >= 2 && <DistanceMeasurements soldiers={soldiers.filter((soldier) => measurementSoldierIds.includes(soldier.id))} />}
 
-        <Roads features={features} center={center} samples={samples} />
-        <GeographicFeatures features={features} center={center} samples={samples} />
+        {settings.showRoads && <Roads features={features} center={center} samples={samples} />}
+        <GeographicFeatures
+          features={features.filter((feature) =>
+            (settings.showWater || feature.featureType !== "water") &&
+            (settings.showLandCover || feature.featureType !== "green") &&
+            (settings.showTrees || feature.featureType !== "tree")
+          )}
+          center={center}
+          samples={samples}
+        />
         <Vegetation
           areas={areas}
           center={center}
@@ -1123,6 +1173,9 @@ export function Space({ step = 2 }: { step?: number }) {
           placementMode={placementMode}
           onTerrainClick={handleTerrainClick}
           checkpointMode={checkpointMode}
+          showTerrain={settings.showTerrain}
+          terrainExaggeration={settings.terrainExaggeration}
+          baseThickness={settings.baseThickness}
         />
         <pointLight position={[-10, -10, -10]} decay={0} intensity={0.35} />
         <Car />

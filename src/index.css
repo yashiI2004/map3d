@@ -306,6 +306,47 @@ body,
   font-size: 0.8rem;
 }
 
+.globe-explorer__editor-controls {
+  position: absolute;
+  z-index: 3;
+  top: 3.25rem;
+  right: 0.75rem;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.45rem 0.7rem;
+  max-width: min(42rem, calc(100% - 1.5rem));
+  padding: 0.55rem 0.7rem;
+  color: #dbeafe;
+  font-size: 0.72rem;
+  background: rgba(7, 15, 29, 0.86);
+  border: 1px solid rgba(103, 232, 249, 0.3);
+  border-radius: 0.55rem;
+  backdrop-filter: blur(12px);
+}
+
+.globe-explorer__editor-controls label {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  white-space: nowrap;
+}
+
+.globe-explorer__editor-controls input[type="range"] {
+  width: 4.5rem;
+  accent-color: #67e8f9;
+}
+
+.globe-explorer__editor-controls button {
+  padding: 0.35rem 0.55rem;
+  color: #082f49;
+  background: #67e8f9;
+  border: 0;
+  border-radius: 0.35rem;
+  cursor: pointer;
+  font-weight: 700;
+}
+
 .globe-explorer__generated-header button {
   padding: 0.35rem 0.55rem;
   color: #164e63;
