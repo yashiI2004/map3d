@@ -75,6 +75,15 @@ export function GlobeTransition({ onSelectionChange, onOpenLegacyTerrain }: Glob
     );
     satelliteLayer.alpha = 0.92;
     satelliteLayer.show = true;
+    const labelsLayer = viewer.imageryLayers.addImageryProvider(
+      new Cesium.UrlTemplateImageryProvider({
+        url: "https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}",
+        maximumLevel: 19,
+        credit: "Esri",
+      })
+    );
+    labelsLayer.alpha = 0.92;
+    labelsLayer.brightness = 1.2;
 
     viewer.scene.globe.enableLighting = true;
     viewer.scene.skyAtmosphere.show = true;
