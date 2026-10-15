@@ -81,9 +81,10 @@ function App() {
   const [editorSettings, setEditorSettings] = useState<SpaceEditorSettings>({
     showTerrain: true,
     showBuildings: true,
-    showRoads: true,
-    showWater: true,
-    showLandCover: true,
+    showSatelliteImagery: true,
+    showRoads: false,
+    showWater: false,
+    showLandCover: false,
     showTrees: true,
     terrainExaggeration: 1,
     buildingScale: 1,
@@ -577,6 +578,7 @@ function App() {
             <div className="globe-explorer__control-section">
               <div className="globe-explorer__control-heading">Layers</div>
               <label>Terrain <input type="checkbox" checked={editorSettings.showTerrain} onChange={(event) => setEditorSettings((s) => ({ ...s, showTerrain: event.target.checked }))} /></label>
+              <label>Satellite imagery <input type="checkbox" checked={editorSettings.showSatelliteImagery} onChange={(event) => setEditorSettings((s) => ({ ...s, showSatelliteImagery: event.target.checked }))} /></label>
               <label>Buildings <input type="checkbox" checked={editorSettings.showBuildings} onChange={(event) => setEditorSettings((s) => ({ ...s, showBuildings: event.target.checked }))} /></label>
               <label>Roads <input type="checkbox" checked={editorSettings.showRoads} onChange={(event) => setEditorSettings((s) => ({ ...s, showRoads: event.target.checked }))} /></label>
               <label>Water <input type="checkbox" checked={editorSettings.showWater} onChange={(event) => setEditorSettings((s) => ({ ...s, showWater: event.target.checked }))} /></label>
@@ -599,7 +601,8 @@ function App() {
               </label>
             </div>
             <div className="globe-explorer__editor-footer">
-              <span>Rectangular selection · OSM + elevation data</span>
+              <span>Rectangular selection · OSM + elevation · Esri World Imagery</span>
+              <small>Imagery © Esri, Maxar, Earthstar Geographics, and the GIS User Community</small>
               <button type="button" onClick={() => setFitModelVersion((version) => version + 1)}>Fit model</button>
               <button type="button" onClick={() => setAction(true)}>Export GLB</button>
             </div>

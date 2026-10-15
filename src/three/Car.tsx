@@ -112,9 +112,9 @@ const Car = () => {
 
   useFrame((state, delta) => {
     if (carRef.current) {
-      const accelerationRate = 0.2;
-      const maxSpeed = 3.0;
-      const decelerationRate = 1.0;
+      const accelerationRate = 7;
+      const maxSpeed = 8;
+      const decelerationRate = 10;
       const forwardInput = keys.current.w || controls.forward;
       const backwardInput = keys.current.s || controls.backward;
       const leftInput = keys.current.a || controls.left;
@@ -147,27 +147,33 @@ const Car = () => {
       if (rightInput) carRef.current.rotation.y -= 0.02;
       const forward = new THREE.Vector3(0, 0, -1);
       forward.applyQuaternion(carRef.current.quaternion);
-      carRef.current.position.addScaledVector(forward, velocity.current);
+      carRef.current.position.addScaledVector(forward, velocity.current * delta);
     }
     if (thirdMode && carRef.current) {
       const carPos = carRef.current.position;
-      const offset = new THREE.Vector3(0, 1, 2);
+      const offset = new THREE.Vector3(0, 1.65, 0.25);
       offset.applyAxisAngle(
         new THREE.Vector3(0, 1, 0),
         carRef.current.rotation.y
       );
       const desiredPosition = carPos.clone().add(offset);
       camera.position.lerp(desiredPosition, 0.1);
-      camera.lookAt(carPos);
+      camera.lookAt(carPos.x, carPos.y + 1.5, carPos.z - 2);
     }
   });
 
   return (
     <>
-      <mesh ref={carRef} position={[0, 0.5, 0]}>
-        <boxGeometry args={[0.2, 0.2, 0.4]} />
-        <meshStandardMaterial color="#facc15" />
-      </mesh>
+      <group ref={carRef} position={[0, 0.5, 0]} visible={false}>
+        <mesh position={[0, 0.25, 0]}>
+          <sphereGeometry args={[0.16, 12, 8]} />
+          <meshStandardMaterial color="#f0b58a" />
+        </mesh>
+        <mesh position={[0, -0.05, 0]}>
+          <capsuleGeometry args={[0.14, 0.42, 4, 8]} />
+          <meshStandardMaterial color="#2563eb" />
+        </mesh>
+      </group>
       {!thirdMode && <OrbitControls />}
     </>
   );

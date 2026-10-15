@@ -137,14 +137,14 @@ export function TopNav({ step }: { step: number }) {
                   isShow={step == 2}
                   onClick={() => setThirdMode(false)}
                 >
-                  Disable Car
+                  Exit Navigate
                 </NavButton>
               ) : (
                 <NavButton
                   isShow={step == 2}
                   onClick={() => setThirdMode(true)}
                 >
-                  Car Mode
+                  Navigate
                 </NavButton>
               )}
             </>
@@ -169,6 +169,17 @@ export function TopNav({ step }: { step: number }) {
             border: "1px solid rgba(148,163,184,0.24)",
           })}
         >
+          <div
+            css={css({
+              gridColumn: "1 / 4",
+              color: "#334155",
+              fontSize: "11px",
+              textAlign: "center",
+              paddingBottom: "0.15rem",
+            })}
+          >
+            Navigate · WASD / arrow keys · click for mouse look · Esc to exit
+          </div>
           <button
             css={css({
               gridColumn: "2 / 3",
