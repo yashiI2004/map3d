@@ -9,11 +9,24 @@ import Car from "./Car";
 import { useCarStore } from "@/state/carStore";
 import instanceFleet from "@/api/axios";
 import { GeoFeature } from "@/components/map/Processing";
+import { fetchDEMSamples } from "@/terrain/dem";
+import type { DEMSample } from "@/terrain/dem";
 
 const scale = 51000;
+const navigationButtonStyle = {
+  width: 42,
+  height: 38,
+  padding: 0,
+  border: "1px solid #cbd5e1",
+  borderRadius: 8,
+  color: "#334155",
+  cursor: "pointer",
+  fontWeight: 700,
+  touchAction: "none" as const,
+};
 
 type Point = { lat: number; lng: number };
-type ElevationSample = Point & { elevation: number };
+type ElevationSample = DEMSample;
 
 export type SpaceEditorSettings = {
   showTerrain: boolean;
@@ -100,42 +113,55 @@ function CameraSurfaceGuard({ samples, center, terrainExaggeration = 1 }: { samp
   return null;
 }
 
-function useElevation(center: any[], enabled: boolean) {
+export type ElevationStatus = "idle" | "loading" | "ready" | "error";
+
+function useElevation(
+  center: any[],
+  enabled: boolean,
+  onStatusChange?: (status: ElevationStatus, message?: string) => void,
+) {
   const [samples, setSamples] = useState<ElevationSample[]>([]);
 
   useEffect(() => {
     if (!enabled || !center?.[0] || !center?.[1]) {
       setSamples([]);
+      onStatusChange?.("idle");
       return;
     }
     const south = Math.min(center[0].lat, center[1].lat);
     const north = Math.max(center[0].lat, center[1].lat);
     const west = Math.min(center[0].lng, center[1].lng);
     const east = Math.max(center[0].lng, center[1].lng);
-    const gridSize = 33;
+    const gridSize = 17;
     const points = Array.from({ length: gridSize * gridSize }, (_, index) => {
       const row = Math.floor(index / gridSize);
       const column = index % gridSize;
       return { lat: south + ((north - south) * row) / (gridSize - 1), lng: west + ((east - west) * column) / (gridSize - 1) };
     });
     const controller = new AbortController();
-    const chunks = Array.from({ length: Math.ceil(points.length / 80) }, (_, index) => points.slice(index * 80, (index + 1) * 80));
+    const chunks = Array.from({ length: Math.ceil(points.length / 100) }, (_, index) => points.slice(index * 100, (index + 1) * 100));
+    onStatusChange?.("loading");
 
-    Promise.all(chunks.map(async (chunk) => {
-      const locations = chunk.map((point) => `${point.lat},${point.lng}`).join("|");
-      const response = await fetch(`/api/elevation?locations=${encodeURIComponent(locations)}`, { signal: controller.signal });
-      if (!response.ok) throw new Error("elevation unavailable");
-      const data = await response.json();
-      return data.results.map((result: any, index: number) => ({ ...chunk[index], elevation: result.elevation }));
-    }))
-      .then((resultChunks) => setSamples(resultChunks.flat()))
+    (async () => {
+      const resultChunks = [];
+      for (let index = 0; index < chunks.length; index += 1) {
+        if (index > 0) await new Promise((resolve) => window.setTimeout(resolve, 1100));
+        resultChunks.push(await fetchDEMSamples(chunks[index], controller.signal));
+      }
+      return resultChunks.flat();
+    })()
+      .then((result) => {
+        setSamples(result);
+        onStatusChange?.("ready");
+      })
       .catch((error) => {
         if (error instanceof DOMException && error.name === "AbortError") return;
         setSamples([]);
+        onStatusChange?.("error", error instanceof Error ? error.message : "DEM data was unavailable.");
       });
 
     return () => controller.abort();
-  }, [center, enabled]);
+  }, [center, enabled, onStatusChange]);
 
   return samples;
 }
@@ -371,26 +397,87 @@ function Building({
         const floorCount = Math.max(1, Math.min(10, Number(tags["building:levels"]) || Math.round(buildingHeight / 3)));
         const floorHeight = buildingHeight / floorCount;
         const windowHeight = Math.min(floorHeight * 0.38, 0.72);
-        const windowCount = Math.max(1, Math.min(3, Math.floor(edge.length / 2.5)));
+        const windowCount = Math.max(1, Math.min(8, Math.floor(edge.length / 1.65)));
         const windowWidth = Math.min((edge.length - (windowCount - 1) * 0.15) / windowCount, 2.2);
         return Array.from({ length: floorCount }).flatMap((_, floorIndex) =>
           Array.from({ length: windowCount }).map((__, wi) => {
             const offset = (wi - (windowCount - 1) / 2) * (windowWidth + 0.18);
+            const isBalconyFloor = isHighRise && floorIndex > 0 && floorIndex % 3 === 0 && wi % 2 === 0;
             return (
-              <mesh
-                key={`window-${index}-${floorIndex}-${wi}`}
-                position={[
-                  edge.mid.x + Math.cos(edge.angle) * offset,
-                  floorHeight * (floorIndex + 0.52),
-                  -edge.mid.y - Math.sin(edge.angle) * offset,
-                ]}
-                rotation={[0, -edge.angle, 0]}
-                castShadow={false}
-                receiveShadow={false}
-              >
-                <boxGeometry args={[windowWidth, windowHeight, 0.06]} />
-                <meshStandardMaterial color={floorIndex % 2 ? "#9ed7ef" : "#72b7d8"} roughness={0.25} metalness={0.45} transparent opacity={0.9} />
-              </mesh>
+              <group key={`window-${index}-${floorIndex}-${wi}`}>
+                <mesh
+                  position={[
+                    edge.mid.x + Math.cos(edge.angle) * offset,
+                    floorHeight * (floorIndex + 0.52),
+                    -edge.mid.y - Math.sin(edge.angle) * offset,
+                  ]}
+                  rotation={[0, -edge.angle, 0]}
+                  castShadow={false}
+                  receiveShadow={false}
+                  userData={{ exportToGLB: true }}
+                >
+                  <boxGeometry args={[windowWidth, windowHeight, 0.06]} />
+                  <meshStandardMaterial color={floorIndex % 2 ? "#9ed7ef" : "#72b7d8"} roughness={0.2} metalness={0.55} transparent opacity={0.9} />
+                </mesh>
+                <mesh
+                  position={[
+                    edge.mid.x + Math.cos(edge.angle) * offset,
+                    floorHeight * (floorIndex + 0.52),
+                    -edge.mid.y - Math.sin(edge.angle) * offset - 0.06,
+                  ]}
+                  rotation={[0, -edge.angle, 0]}
+                  userData={{ exportToGLB: true }}
+                >
+                  <boxGeometry args={[windowWidth + 0.1, windowHeight + 0.1, 0.035]} />
+                  <meshStandardMaterial color="#e7e5df" roughness={0.8} />
+                </mesh>
+                {windowWidth > 0.8 && (
+                  <>
+                    <mesh
+                      position={[
+                        edge.mid.x + Math.cos(edge.angle) * offset,
+                        floorHeight * (floorIndex + 0.52),
+                        -edge.mid.y - Math.sin(edge.angle) * offset - 0.085,
+                      ]}
+                      rotation={[0, -edge.angle, 0]}
+                      userData={{ exportToGLB: true }}
+                    >
+                      <boxGeometry args={[0.045, windowHeight, 0.04]} />
+                      <meshStandardMaterial color="#d6dde2" metalness={0.45} roughness={0.45} />
+                    </mesh>
+                    <mesh
+                      position={[
+                        edge.mid.x + Math.cos(edge.angle) * offset,
+                        floorHeight * (floorIndex + 0.52),
+                        -edge.mid.y - Math.sin(edge.angle) * offset - 0.086,
+                      ]}
+                      rotation={[0, -edge.angle, 0]}
+                      userData={{ exportToGLB: true }}
+                    >
+                      <boxGeometry args={[windowWidth, 0.045, 0.04]} />
+                      <meshStandardMaterial color="#d6dde2" metalness={0.45} roughness={0.45} />
+                    </mesh>
+                  </>
+                )}
+                {isBalconyFloor && (
+                  <group position={[edge.mid.x + Math.cos(edge.angle) * offset, floorHeight * (floorIndex + 0.2), -edge.mid.y - Math.sin(edge.angle) * offset - 0.18]} rotation={[0, -edge.angle, 0]} userData={{ exportToGLB: true }}>
+                    <mesh position={[0, 0, 0]} castShadow>
+                      <boxGeometry args={[windowWidth + 0.35, 0.08, 0.7]} />
+                      <meshStandardMaterial color="#9b9489" roughness={0.8} />
+                    </mesh>
+                    {[-0.32, 0.32].map((railX) => (
+                      <mesh key={`rail-${railX}`} position={[railX, 0.38, -0.3]}>
+                        <boxGeometry args={[0.035, 0.75, 0.035]} />
+                        <meshStandardMaterial color="#4b5563" metalness={0.65} roughness={0.35} />
+                      </mesh>
+                    ))}
+                    <mesh position={[0, 0.72, -0.3]}>
+                      <boxGeometry args={[windowWidth + 0.35, 0.035, 0.035]} />
+                      <meshStandardMaterial color="#4b5563" metalness={0.65} roughness={0.35} />
+                    </mesh>
+                  </group>
+                )}
+              </group>
             );
           })
         );
@@ -443,6 +530,40 @@ function Building({
               <boxGeometry args={[doorWidth * 0.62, 0.08, 0.12]} />
               <meshStandardMaterial color="#c7d2fe" />
             </mesh>
+            <mesh
+              position={[entrance.mid.x, doorHeight + 0.62, -entrance.mid.y - 0.08]}
+              rotation={[0, -entrance.angle, 0]}
+              castShadow
+              userData={{ exportToGLB: true }}
+            >
+              <boxGeometry args={[glassWidth, 0.08, 1.15]} />
+              <meshStandardMaterial color="#d7d0c4" roughness={0.78} />
+            </mesh>
+            <mesh
+              position={[entrance.mid.x, doorHeight * 0.55, -entrance.mid.y - 0.11]}
+              rotation={[0, -entrance.angle, 0]}
+              userData={{ exportToGLB: true }}
+            >
+              <boxGeometry args={[0.035, doorHeight * 0.85, 0.035]} />
+              <meshStandardMaterial color="#d1d5db" metalness={0.6} />
+            </mesh>
+            <mesh
+              position={[entrance.mid.x, 0.08, -entrance.mid.y - 0.2]}
+              rotation={[0, -entrance.angle, 0]}
+              receiveShadow
+              userData={{ exportToGLB: true }}
+            >
+              <boxGeometry args={[doorWidth + 0.45, 0.16, 0.7]} />
+              <meshStandardMaterial color="#8c8175" roughness={0.9} />
+            </mesh>
+            <mesh
+              position={[entrance.mid.x, doorHeight * 0.52, -entrance.mid.y - 0.13]}
+              rotation={[0, -entrance.angle, 0]}
+              userData={{ exportToGLB: true }}
+            >
+              <sphereGeometry args={[0.055, 10, 8]} />
+              <meshStandardMaterial color="#f2c14e" metalness={0.8} roughness={0.25} />
+            </mesh>
           </group>
         );
       })()}
@@ -464,6 +585,23 @@ function Building({
         <extrudeGeometry args={[shape, { ...extrudeSettings, depth: 0.12 }]} />
         <meshStandardMaterial color="#d7d2c8" roughness={0.72} metalness={0.18} />
       </mesh>
+      <group position={[0, buildingHeight + roofHeight + 0.22, 0]} userData={{ exportToGLB: true }}>
+        {[
+          [-footprintWidth * 0.24, -footprintDepth * 0.2],
+          [footprintWidth * 0.24, footprintDepth * 0.18],
+        ].map(([x, z], index) => (
+          <group key={`roof-unit-${index}`} position={[x, 0, z]}>
+            <mesh castShadow>
+              <boxGeometry args={[Math.min(1.2, footprintWidth * 0.12), 0.42, Math.min(0.9, footprintDepth * 0.12)]} />
+              <meshStandardMaterial color="#68737a" roughness={0.68} metalness={0.35} />
+            </mesh>
+            <mesh position={[0, 0.23, 0]}>
+              <boxGeometry args={[Math.min(0.8, footprintWidth * 0.08), 0.06, Math.min(0.6, footprintDepth * 0.08)]} />
+              <meshStandardMaterial color="#39434a" roughness={0.5} metalness={0.45} />
+            </mesh>
+          </group>
+        ))}
+      </group>
       {isHighRise && (
         <group position={[0, buildingHeight + roofHeight + 0.5, 0]}>
           <mesh position={[0, 0.35, 0]} castShadow>
@@ -1245,10 +1383,12 @@ export function Space({
   step = 2,
   editorSettings,
   fitVersion = 0,
+  onElevationStatus,
 }: {
   step?: number;
   editorSettings?: Partial<SpaceEditorSettings>;
   fitVersion?: number;
+  onElevationStatus?: (status: ElevationStatus, message?: string) => void;
 }) {
   const settings: SpaceEditorSettings = {
     showTerrain: true,
@@ -1277,7 +1417,7 @@ export function Space({
   const center = useAreaStore((state) => state.center);
   const refLat = center.length >= 2 ? (center[1].lat + center[0].lat) / 2 : 0;
   const refLng = center.length >= 2 ? (center[1].lng + center[0].lng) / 2 : 0;
-  const samples = useElevation(center, center.length >= 2);
+  const samples = useElevation(center, center.length >= 2, onElevationStatus);
   const [placementMode, setPlacementMode] = useState<"normal" | "add" | "move">("normal");
   const [measurementMode, setMeasurementMode] = useState(false);
   const [checkpointMode, setCheckpointMode] = useState(false);
@@ -1359,6 +1499,8 @@ export function Space({
   const noteText = useAreaStore((state) => state.noteText);
   const thirdMode = useCarStore((state) => state.thirdMode);
   const setThirdMode = useCarStore((state) => state.setThirdMode);
+  const controls = useCarStore((state) => state.controls);
+  const setControl = useCarStore((state) => state.setControl);
 
   const handleTerrainClick = (point: { x: number; z: number; latitude: number; longitude: number; altitude: number }) => {
     if (placementMode === "move" && selectedSoldierId) {
@@ -1405,7 +1547,7 @@ export function Space({
         shadows={{ type: THREE.PCFSoftShadowMap }}
       >
         <CameraFrame center={center} fitVersion={fitVersion} />
-        <OrbitControls makeDefault enableDamping dampingFactor={0.08} />
+        <OrbitControls makeDefault enabled={!thirdMode} enableDamping dampingFactor={0.08} />
         <CameraFocus point={focusPoint} />
         <CameraSurfaceGuard samples={samples} center={center} terrainExaggeration={settings.terrainExaggeration} />
         <color attach="background" args={["#8798a8"]} />
@@ -1610,6 +1752,104 @@ export function Space({
         )}
         </>}
       </div>}
+
+      {thirdMode && (
+        <div
+          aria-label="3D navigation controls"
+          onClick={(event) => event.stopPropagation()}
+          style={{
+            position: "absolute",
+            right: 16,
+            bottom: 16,
+            zIndex: 10,
+            display: "grid",
+            gridTemplateColumns: "repeat(3, 42px)",
+            gap: 5,
+            padding: 8,
+            background: "rgba(255,255,255,0.94)",
+            border: "1px solid rgba(148,163,184,0.35)",
+            borderRadius: 12,
+            boxShadow: "0 12px 30px rgba(15,23,42,0.16)",
+          }}
+        >
+          <div
+            style={{
+              gridColumn: "1 / 4",
+              textAlign: "center",
+              color: "#475569",
+              fontSize: 11,
+              fontWeight: 700,
+              paddingBottom: 2,
+            }}
+          >
+            Move around the model
+          </div>
+          <button
+            type="button"
+            aria-label="Move forward"
+            style={{ gridColumn: 2, ...navigationButtonStyle, background: controls.forward ? "#bfdbfe" : "#fff" }}
+            onPointerDown={(event) => {
+              event.currentTarget.setPointerCapture(event.pointerId);
+              setControl("forward", true);
+            }}
+            onPointerUp={(event) => {
+              event.currentTarget.releasePointerCapture(event.pointerId);
+              setControl("forward", false);
+            }}
+            onPointerCancel={() => setControl("forward", false)}
+          >
+            ▲
+          </button>
+          <button
+            type="button"
+            aria-label="Move left"
+            style={{ gridColumn: 1, ...navigationButtonStyle, background: controls.left ? "#bfdbfe" : "#fff" }}
+            onPointerDown={(event) => {
+              event.currentTarget.setPointerCapture(event.pointerId);
+              setControl("left", true);
+            }}
+            onPointerUp={(event) => {
+              event.currentTarget.releasePointerCapture(event.pointerId);
+              setControl("left", false);
+            }}
+            onPointerCancel={() => setControl("left", false)}
+          >
+            ◀
+          </button>
+          <button
+            type="button"
+            aria-label="Move right"
+            style={{ gridColumn: 3, ...navigationButtonStyle, background: controls.right ? "#bfdbfe" : "#fff" }}
+            onPointerDown={(event) => {
+              event.currentTarget.setPointerCapture(event.pointerId);
+              setControl("right", true);
+            }}
+            onPointerUp={(event) => {
+              event.currentTarget.releasePointerCapture(event.pointerId);
+              setControl("right", false);
+            }}
+            onPointerCancel={() => setControl("right", false)}
+          >
+            ▶
+          </button>
+          <button
+            type="button"
+            aria-label="Move backward"
+            style={{ gridColumn: 2, ...navigationButtonStyle, background: controls.backward ? "#bfdbfe" : "#fff" }}
+            onPointerDown={(event) => {
+              event.currentTarget.setPointerCapture(event.pointerId);
+              setControl("backward", true);
+            }}
+            onPointerUp={(event) => {
+              event.currentTarget.releasePointerCapture(event.pointerId);
+              setControl("backward", false);
+            }}
+            onPointerCancel={() => setControl("backward", false)}
+          >
+            ▼
+          </button>
+        </div>
+      )}
 
       <div
         style={{

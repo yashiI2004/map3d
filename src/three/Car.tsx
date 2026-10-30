@@ -1,6 +1,5 @@
 import React, { useRef, useEffect, useCallback } from "react";
 import { useFrame, useThree } from "@react-three/fiber";
-import { OrbitControls } from "@react-three/drei";
 import * as THREE from "three";
 import { useCarStore } from "@/state/carStore";
 
@@ -12,33 +11,34 @@ const Car = () => {
   const controls = useCarStore((state) => state.controls);
   const setControl = useCarStore((state) => state.setControl);
   const resetControls = useCarStore((state) => state.resetControls);
-  const keys = useRef({ w: false, s: false, a: false, d: false });
   const velocity = useRef(0);
-
   const handleKeyDown = useCallback((e) => {
+    if (!thirdMode) return;
+
     switch (e.key.toLowerCase()) {
       case "w":
       case "arrowup":
-        keys.current.w = true;
         setControl("forward", true);
+        e.preventDefault();
         break;
       case "s":
       case "arrowdown":
-        keys.current.s = true;
         setControl("backward", true);
+        e.preventDefault();
         break;
       case "a":
       case "arrowleft":
-        keys.current.a = true;
         setControl("left", true);
+        e.preventDefault();
         break;
       case "d":
       case "arrowright":
-        keys.current.d = true;
         setControl("right", true);
+        e.preventDefault();
         break;
       case "escape":
         setThirdMode(false);
+        velocity.current = 0;
         resetControls();
         if (document.exitPointerLock) {
           document.exitPointerLock();
@@ -47,29 +47,29 @@ const Car = () => {
       default:
         break;
     }
-  }, [resetControls, setControl, setThirdMode]);
+  }, [resetControls, setControl, setThirdMode, thirdMode]);
 
   const handleKeyUp = useCallback((e) => {
     switch (e.key.toLowerCase()) {
       case "w":
       case "arrowup":
-        keys.current.w = false;
         setControl("forward", false);
+        e.preventDefault();
         break;
       case "s":
       case "arrowdown":
-        keys.current.s = false;
         setControl("backward", false);
+        e.preventDefault();
         break;
       case "a":
       case "arrowleft":
-        keys.current.a = false;
         setControl("left", false);
+        e.preventDefault();
         break;
       case "d":
       case "arrowright":
-        keys.current.d = false;
         setControl("right", false);
+        e.preventDefault();
         break;
       default:
         break;
@@ -87,13 +87,11 @@ const Car = () => {
 
   useEffect(() => {
     if (thirdMode) {
-      const handleClick = () => {
-        if (document.pointerLockElement !== document.body) {
-          document.body.requestPointerLock();
-        }
+      const handleBlur = () => resetControls();
+      window.addEventListener("blur", handleBlur);
+      return () => {
+        window.removeEventListener("blur", handleBlur);
       };
-      window.addEventListener("click", handleClick);
-      return () => window.removeEventListener("click", handleClick);
     }
     resetControls();
   }, [thirdMode, resetControls]);
@@ -112,41 +110,21 @@ const Car = () => {
 
   useFrame((state, delta) => {
     if (carRef.current) {
-      const accelerationRate = 7;
-      const maxSpeed = 8;
-      const decelerationRate = 10;
-      const forwardInput = keys.current.w || controls.forward;
-      const backwardInput = keys.current.s || controls.backward;
-      const leftInput = keys.current.a || controls.left;
-      const rightInput = keys.current.d || controls.right;
-
-      if (forwardInput) {
-        velocity.current = Math.min(
-          maxSpeed,
-          velocity.current + accelerationRate * delta
-        );
-      } else if (backwardInput) {
-        velocity.current = Math.max(
-          -maxSpeed,
-          velocity.current - accelerationRate * delta
-        );
-      } else {
-        if (velocity.current > 0) {
-          velocity.current = Math.max(
-            0,
-            velocity.current - decelerationRate * delta
-          );
-        } else if (velocity.current < 0) {
-          velocity.current = Math.min(
-            0,
-            velocity.current + decelerationRate * delta
-          );
-        }
+      const acceleration = controls.forward ? 18 : controls.backward ? -11 : 0;
+      velocity.current = THREE.MathUtils.clamp(
+        velocity.current + acceleration * delta,
+        -8,
+        22
+      );
+      if (!acceleration) {
+        velocity.current = THREE.MathUtils.damp(velocity.current, 0, 5, delta);
       }
-      if (leftInput) carRef.current.rotation.y += 0.02;
-      if (rightInput) carRef.current.rotation.y -= 0.02;
-      const forward = new THREE.Vector3(0, 0, -1);
-      forward.applyQuaternion(carRef.current.quaternion);
+
+      const steering = (controls.left ? 1 : 0) - (controls.right ? 1 : 0);
+      if (steering && Math.abs(velocity.current) > 0.1) {
+        carRef.current.rotation.y += steering * 1.8 * delta * Math.sign(velocity.current);
+      }
+      const forward = new THREE.Vector3(0, 0, -1).applyQuaternion(carRef.current.quaternion);
       carRef.current.position.addScaledVector(forward, velocity.current * delta);
     }
     if (thirdMode && carRef.current) {
@@ -164,17 +142,43 @@ const Car = () => {
 
   return (
     <>
-      <group ref={carRef} position={[0, 0.5, 0]} visible={false}>
-        <mesh position={[0, 0.25, 0]}>
-          <sphereGeometry args={[0.16, 12, 8]} />
-          <meshStandardMaterial color="#f0b58a" />
+      <group ref={carRef} position={[0, 0.5, 0]} visible={thirdMode}>
+        <mesh position={[0, 0.42, 0]} castShadow>
+          <boxGeometry args={[1.8, 0.55, 3.2]} />
+          <meshStandardMaterial color="#dc2626" roughness={0.35} metalness={0.35} />
         </mesh>
-        <mesh position={[0, -0.05, 0]}>
-          <capsuleGeometry args={[0.14, 0.42, 4, 8]} />
-          <meshStandardMaterial color="#2563eb" />
+        <mesh position={[0, 0.82, 0.2]} castShadow>
+          <boxGeometry args={[1.35, 0.58, 1.35]} />
+          <meshStandardMaterial color="#b91c1c" roughness={0.35} metalness={0.3} />
         </mesh>
+        <mesh position={[0, 0.84, -0.05]} castShadow>
+          <boxGeometry args={[1.18, 0.38, 1.08]} />
+          <meshStandardMaterial color="#93c5fd" roughness={0.12} metalness={0.6} />
+        </mesh>
+        {[
+          [-0.92, 0.28, -1.05],
+          [0.92, 0.28, -1.05],
+          [-0.92, 0.28, 1.05],
+          [0.92, 0.28, 1.05],
+        ].map(([x, y, z], index) => (
+          <mesh key={`wheel-${index}`} position={[x, y, z]} rotation={[0, 0, Math.PI / 2]} castShadow>
+            <cylinderGeometry args={[0.32, 0.32, 0.2, 16]} />
+            <meshStandardMaterial color="#171717" roughness={0.82} />
+          </mesh>
+        ))}
+        {[-0.62, 0.62].map((x) => (
+          <mesh key={`headlight-${x}`} position={[x, 0.5, -1.63]} castShadow>
+            <boxGeometry args={[0.3, 0.14, 0.05]} />
+            <meshStandardMaterial color="#fef3c7" emissive="#facc15" emissiveIntensity={0.8} />
+          </mesh>
+        ))}
+        {[-0.62, 0.62].map((x) => (
+          <mesh key={`taillight-${x}`} position={[x, 0.5, 1.63]}>
+            <boxGeometry args={[0.3, 0.14, 0.05]} />
+            <meshStandardMaterial color="#7f1d1d" emissive="#ef4444" emissiveIntensity={0.5} />
+          </mesh>
+        ))}
       </group>
-      {!thirdMode && <OrbitControls />}
     </>
   );
 };

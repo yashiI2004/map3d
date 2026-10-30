@@ -1,5 +1,6 @@
 import { css, keyframes } from "@emotion/react";
 import { Loader2 } from "lucide-react";
+import { FeatureProvenance, SceneFeatureType } from "@/ai/contracts";
 
 export interface Building {
   id: number;
@@ -8,7 +9,8 @@ export interface Building {
 }
 
 export interface GeoFeature extends Building {
-  featureType: "building" | "road" | "green" | "water" | "tree";
+  featureType: SceneFeatureType;
+  provenance: FeatureProvenance;
 }
 
 const spinAnimation = keyframes`

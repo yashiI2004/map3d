@@ -24,6 +24,9 @@ import { TopNav } from "@/components/nav/TopNav";
 import { getCookie } from "@/utils/cookie";
 import { Row } from "@/components/flex/Row";
 import instanceFleet from "@/api/axios";
+import { AIToolsPanel } from "@/components/AIToolsPanel";
+import { validateSceneFeature } from "@/ai/contracts";
+import { ElevationStatus } from "@/three/Space";
 
 const IconSize = css({
   width: "14px",
@@ -76,6 +79,8 @@ function App() {
   const [showGeneratedTerrain, setShowGeneratedTerrain] = useState(false);
   const [generationStatus, setGenerationStatus] = useState<"idle" | "loading" | "ready" | "error">("idle");
   const [generationError, setGenerationError] = useState<string | null>(null);
+  const [elevationStatus, setElevationStatus] = useState<ElevationStatus>("idle");
+  const [elevationError, setElevationError] = useState<string | null>(null);
   const [showLegacyTerrain, setShowLegacyTerrain] = useState(false);
   const [fitModelVersion, setFitModelVersion] = useState(0);
   const [editorSettings, setEditorSettings] = useState<SpaceEditorSettings>({
@@ -104,6 +109,7 @@ function App() {
 
   const setCenter = useAreaStore((state) => state.setCenter);
   const setFeatures = useAreaStore((state) => state.setFeatures);
+  const sceneFeatures = useAreaStore((state) => state.features);
   const appendAreas = useAreaStore((state) => state.appendAreas);
   const setAction = useActionStore((state) => state.setAction);
   const setFleet = useActionStore((state) => state.setFleet);
@@ -380,7 +386,11 @@ function App() {
       console.log("RETURNED OSM EXTENT", extent);
       const features: GeoFeature[] = boundedElements.map((element) => ({
         id: element.id,
-        tags: element.tags,
+        tags: element.tags || {},
+        provenance: {
+          source: "openstreetmap",
+          sourceId: String(element.id),
+        },
         featureType: element.tags?.building
           ? "building"
           : element.tags?.highway
@@ -397,7 +407,7 @@ function App() {
           : element.lat !== undefined && element.lon !== undefined
             ? [{ lat: element.lat, lng: element.lon }]
             : undefined,
-      }));
+      })).map(validateSceneFeature).filter((feature): feature is GeoFeature => feature !== null);
       const blds: Building[] = features.filter((feature) => feature.featureType === "building");
       setDebugData({
         bounds: selectedBounds,
@@ -458,6 +468,11 @@ function App() {
   const handleGlobeGenerationError = useCallback((message: string) => {
     setGenerationStatus("error");
     setGenerationError(message);
+  }, []);
+
+  const handleElevationStatus = useCallback((status: ElevationStatus, message?: string) => {
+    setElevationStatus(status);
+    setElevationError(message || null);
   }, []);
 
   const handleClickNextStep = async () => {
@@ -600,6 +615,12 @@ function App() {
                 {editorSettings.baseThickness}m
               </label>
             </div>
+            <AIToolsPanel
+              features={sceneFeatures}
+              uploadedImageCount={uploadedFiles.length}
+              elevationStatus={elevationStatus}
+              elevationError={elevationError || undefined}
+            />
             <div className="globe-explorer__editor-footer">
               <span>Rectangular selection · OSM + elevation · Esri World Imagery</span>
               <small>Imagery © Esri, Maxar, Earthstar Geographics, and the GIS User Community</small>
@@ -607,7 +628,12 @@ function App() {
               <button type="button" onClick={() => setAction(true)}>Export GLB</button>
             </div>
           </div>
-          <Space step={2} editorSettings={editorSettings} fitVersion={fitModelVersion} />
+          <Space
+            step={2}
+            editorSettings={editorSettings}
+            fitVersion={fitModelVersion}
+            onElevationStatus={handleElevationStatus}
+          />
         </div>
       )}
       {showLegacyTerrain && <TopNav step={step} />}
